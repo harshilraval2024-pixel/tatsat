@@ -1,26 +1,108 @@
 @import "tailwindcss";
 
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  --bg: #030304;
+  --bg-elevated: #0a0b0f;
+  --primary: #ffd000;
+  --secondary: #ff6a00;
+  --accent: #ff3b00;
+  --muted: #9aa3b2;
+  --ring-glow: color-mix(in oklab, var(--primary) 55%, transparent);
 }
 
 @theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+  --color-bg: var(--bg);
+  --color-bg-elevated: var(--bg-elevated);
+  --color-primary: var(--primary);
+  --color-secondary: var(--secondary);
+  --color-accent: var(--accent);
+  --color-muted: var(--muted);
+  --font-sans: var(--font-manrope), ui-sans-serif, system-ui;
+  --font-display: var(--font-syne), ui-sans-serif, system-ui;
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+html {
+  scroll-behavior: smooth;
 }
 
 body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  background: radial-gradient(1200px 600px at 10% -10%, color-mix(in oklab, var(--secondary) 22%, transparent), transparent 55%),
+    radial-gradient(900px 500px at 90% 0%, color-mix(in oklab, var(--accent) 18%, transparent), transparent 50%),
+    var(--bg);
+  color: #e8ecf4;
+}
+
+::selection {
+  background: color-mix(in oklab, var(--primary) 35%, transparent);
+  color: #0a0b0f;
+}
+
+@keyframes spin-slow {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes pulse-ring {
+  0%,
+  100% {
+    opacity: 0.45;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.9;
+    transform: scale(1.04);
+  }
+}
+
+@keyframes float-y {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-10px);
+  }
+}
+
+.animate-spin-slow {
+  animation: spin-slow 38s linear infinite;
+}
+
+.animate-spin-slow-reverse {
+  animation: spin-slow 52s linear infinite reverse;
+}
+
+.animate-pulse-ring {
+  animation: pulse-ring 6s ease-in-out infinite;
+}
+
+.animate-float {
+  animation: float-y 7s ease-in-out infinite;
+}
+
+.glass-panel {
+  background: linear-gradient(135deg, color-mix(in oklab, #ffffff 6%, transparent), color-mix(in oklab, #ffffff 2%, transparent));
+  border: 1px solid color-mix(in oklab, var(--primary) 18%, transparent);
+  box-shadow: 0 0 0 1px color-mix(in oklab, #000 60%, transparent) inset, 0 20px 80px color-mix(in oklab, #000 65%, transparent);
+  backdrop-filter: blur(14px);
+}
+
+.text-gradient-brand {
+  background: linear-gradient(115deg, var(--primary), var(--secondary) 55%, var(--accent));
+  -webkit-background-clip: text;
+  color: transparent;
+  background-clip: text;
+}
+
+.glow-border {
+  box-shadow: 0 0 0 1px color-mix(in oklab, var(--primary) 35%, transparent), 0 0 40px color-mix(in oklab, var(--secondary) 25%, transparent);
+}
+
+.focus-ring:focus-visible {
+  outline: 2px solid color-mix(in oklab, var(--primary) 70%, white);
+  outline-offset: 3px;
 }
