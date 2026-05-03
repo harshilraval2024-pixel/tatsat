@@ -43,6 +43,22 @@ Backend and internal admin for the Tatsat NRGS site. Serves public estimation en
 - **http://127.0.0.1:8000/docs** for OpenAPI.  
 - **http://127.0.0.1:8000/health** for a quick health check.
 
+## Deploy on Render.com
+
+1. Create a **PostgreSQL** instance, then a **Web Service** from this repo.
+2. Set **Root Directory** to `backend` (see `render.yaml` at the repo root).
+3. **Build command:** `pip install -r requirements.txt`  
+   **Start command:** `uvicorn app.main:app --host 0.0.0.0 --port $PORT`  
+   **Release / pre-deploy (recommended):** `alembic upgrade head`
+4. **Environment variables**
+   - **`DATABASE_URL`** — paste the Postgres **Internal Database URL** from Render (`postgresql://…`). The app will derive the async (`asyncpg`) URL and the sync URL for migrations (you do not need a second variable unless you want to override).
+   - **`JWT_SECRET`** — long random string (do not use the default).
+   - **`CORS_ORIGINS`** — include your production Next.js origin(s), comma-separated, e.g. `https://your-app.vercel.app`
+
+Render sets **`RENDER=true`** and **`PORT`** automatically. The API serves **`GET /health`** for health checks.
+
+If the service failed before: a common issue was only setting `DATABASE_URL` while the sync URL stayed on `localhost`, so Alembic and the sync engine never used your Render database. That is normalized in `app.config` now.
+
 ## Docker (PostgreSQL)
 
 From `backend/`:
