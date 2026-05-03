@@ -2,21 +2,15 @@
 
 export const ADMIN_JWT_KEY = "nrgs_admin_jwt";
 
-/** Deployed API (health: …/api/health). Override anytime with NEXT_PUBLIC_API_URL. */
-export const DEFAULT_PRODUCTION_API_ORIGIN = "https://member-attendance-api.onrender.com/api";
-
 /**
  * Browser (no NEXT_PUBLIC_API_URL): use Next.js rewrite `/nrgs-api/*` → FastAPI (same page origin → no CORS).
  * Server / SSR: call FastAPI directly (rewrites do not apply to server-side fetch).
- * Production: defaults to {@link DEFAULT_PRODUCTION_API_ORIGIN}; set NEXT_PUBLIC_API_URL to override.
+ * Production: set NEXT_PUBLIC_API_URL to your public API origin.
  */
 export function getApiBase(): string {
   const raw = process.env.NEXT_PUBLIC_API_URL?.trim();
   if (raw) {
     return raw.replace(/\/$/, "");
-  }
-  if (process.env.NODE_ENV === "production") {
-    return DEFAULT_PRODUCTION_API_ORIGIN;
   }
   if (typeof window !== "undefined") {
     return "/nrgs-api";
