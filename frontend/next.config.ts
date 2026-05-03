@@ -20,6 +20,11 @@ const nextConfig: NextConfig = {
       { protocol: "http", hostname: "127.0.0.1", port: "8000", pathname: "/uploads/**" },
       { protocol: "http", hostname: "localhost", port: "8000", pathname: "/uploads/**" },
       { protocol: "https", hostname: "localhost", port: "8000", pathname: "/uploads/**" },
+      {
+        protocol: "https",
+        hostname: "member-attendance-api.onrender.com",
+        pathname: "/uploads/**",
+      },
     ],
   },
 };
