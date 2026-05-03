@@ -1,0 +1,14 @@
+.venv/
+.env
+# keep data/; ignore sqlite db
+data/*.db
+.alembic_tmp.db
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+node_modules/
+admin/node_modules/
+*.egg-info/
+dist/
+*.log
