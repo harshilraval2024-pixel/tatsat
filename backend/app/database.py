@@ -32,6 +32,7 @@ elif "postgresql+asyncpg" in _du and (
 ):
     # Render managed Postgres + asyncpg typically needs TLS for external hostname connections.
     _engine_kw["connect_args"] = {"ssl": True}
+
 async_engine = create_async_engine(
     settings.database_url,
     **_engine_kw,
@@ -44,10 +45,14 @@ AsyncSessionLocal = async_sessionmaker(
     autoflush=False,
 )
 
+_sync_kw: dict = {"echo": settings.debug, "pool_pre_ping": True}
+if "postgresql" in settings.database_url_sync.lower() and _render_runtime():
+    # Alembic / sync scripts on Render (psycopg2).
+    _sync_kw["connect_args"] = {"sslmode": "require"}
+
 sync_engine = create_engine(
     settings.database_url_sync,
-    echo=settings.debug,
-    pool_pre_ping=True,
+    **_sync_kw,
 )
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=sync_engine)
 

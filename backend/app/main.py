@@ -5,7 +5,9 @@ from typing import Annotated
 
 from fastapi import Depends, FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
@@ -59,6 +61,37 @@ if _rx:
 app.add_middleware(CORSMiddleware, **_cors_kw)
 
 
+@app.exception_handler(SQLAlchemyError)
+async def database_error_handler(_request: Request, exc: SQLAlchemyError) -> JSONResponse:
+    log.exception("Database error")
+    detail = "Database unavailable."
+    if os.environ.get("RENDER", "").lower() in ("true", "1", "yes"):
+        url = settings.database_url.lower()
+        if "127.0.0.1" in url or "localhost" in url:
+            detail = (
+                "DATABASE_URL is not configured on Render. Link a Postgres database and "
+                "set DATABASE_URL to its Internal URL, then redeploy."
+            )
+        else:
+            detail = (
+                "Database connection failed. Confirm DATABASE_URL, run migrations "
+                "(alembic upgrade head), and seed_data."
+            )
+    return JSONResponse(status_code=503, content={"detail": detail})
+
+
+@app.on_event("startup")
+async def startup_check() -> None:
+    if os.environ.get("RENDER", "").lower() not in ("true", "1", "yes"):
+        return
+    url = settings.database_url.lower()
+    if "127.0.0.1" in url or "localhost" in url:
+        log.critical(
+            "Render deploy is using localhost DATABASE_URL — API routes like /states will fail "
+            "until you set DATABASE_URL to your Render Postgres Internal URL."
+        )
+
+
 @app.middleware("http")
 async def request_timer(request: Request, call_next):  # type: ignore[no-untyped-def]
     start = time.perf_counter()
@@ -85,7 +118,6 @@ async def export_leads_public_alias(
 
 
 # Built admin UI: cd admin && npm run build
-import os
 
 _static_dir = os.path.join(os.path.dirname(__file__), "..", "static", "admin")
 if os.path.isdir(_static_dir):
