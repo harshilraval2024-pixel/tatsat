@@ -185,7 +185,7 @@ def seed(session: Session) -> None:
                     "Premium solar panel installation for homes and businesses across India. "
                     "Expert design, subsidy guidance, and long-term support from Gujarat."
                 ),
-                public_url="https://tatsat-nrgs.vercel.app",
+                public_url="https://tatsat.vercel.app",
                 phone_display="+91 98250 12345",
                 phone_tel="+919825012345",
                 whatsapp_digits="919825012345",

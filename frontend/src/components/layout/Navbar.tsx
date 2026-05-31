@@ -6,7 +6,6 @@ import { useEffect, useState } from "react";
 import { navLinks } from "@/lib/site";
 import { Logo } from "@/components/Logo";
 import { GlowButton } from "@/components/ui/GlowButton";
-import { useAdminSession } from "@/lib/use-admin-session";
 import { useSiteConfig } from "@/components/SiteConfigProvider";
 
 const linkBase =
@@ -14,14 +13,10 @@ const linkBase =
 const linkActive = "text-primary";
 const linkIdle = "text-muted";
 
-const staffPillBase =
-  "rounded-full border px-3 py-2 text-xs font-semibold uppercase tracking-wide transition-colors duration-200";
-
 export function Navbar() {
   const pathname = usePathname();
   const [open, setOpen] = useState(false);
   const [scrolled, setScrolled] = useState(false);
-  const adminSession = useAdminSession();
   const siteCfg = useSiteConfig();
 
   useEffect(() => {
@@ -69,19 +64,6 @@ export function Navbar() {
         </nav>
 
         <div className="flex min-w-0 flex-shrink-0 items-center justify-end gap-2.5 sm:gap-3 justify-self-end">
-          <Link
-            href="/admin"
-            aria-current={pathname === "/admin" ? "page" : undefined}
-            className={`${staffPillBase} ${
-              pathname === "/admin"
-                ? "border-primary/60 bg-primary/10 text-primary"
-                : adminSession
-                  ? "border-emerald-500/35 bg-emerald-500/10 text-emerald-300/90 hover:border-emerald-400/50"
-                  : "border-white/15 text-muted hover:border-primary/40 hover:text-primary"
-            }`}
-          >
-            {adminSession ? "Dashboard" : "Staff"}
-          </Link>
           <GlowButton
             href="/quote"
             variant="outline"
@@ -138,19 +120,6 @@ export function Navbar() {
               );
             })}
           </nav>
-
-          <div className="my-5 h-px bg-gradient-to-r from-transparent via-white/15 to-transparent" />
-
-          <p className="mb-3 text-[10px] font-semibold uppercase tracking-[0.2em] text-muted">Team</p>
-          <Link
-            href="/admin"
-            className={`flex items-center justify-between rounded-xl px-3 py-3 text-sm font-semibold transition-colors ${
-              pathname === "/admin" ? "bg-primary/10 text-primary" : "text-white hover:bg-white/5"
-            }`}
-          >
-            <span>{adminSession ? "Dashboard" : "Staff login"}</span>
-            <span className="text-xs font-normal text-muted">{adminSession ? "Signed in" : "Internal"}</span>
-          </Link>
 
           <GlowButton
             href="/quote"

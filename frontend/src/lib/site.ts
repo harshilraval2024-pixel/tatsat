@@ -3,7 +3,7 @@ export const site = {
   tagline: "Potential Power Solutions",
   description:
     "Premium solar panel installation for homes and businesses across India. Expert design, subsidy guidance, and long-term support from Gujarat.",
-  url: "https://tatsat-nrgs.vercel.app",
+  url: "https://tatsat.vercel.app",
   phoneDisplay: "+91 98250 12345",
   phoneTel: "+919825012345",
   whatsapp: "919825012345",
