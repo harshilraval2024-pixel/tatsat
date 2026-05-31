@@ -29,16 +29,18 @@ class Settings(BaseSettings):
     cors_origins: str = (
         "http://localhost:3000,http://localhost:3001,"
         "http://127.0.0.1:3000,http://127.0.0.1:3001,"
-        "http://localhost:5173"
+        "http://localhost:5173,"
+        "https://tatsat.vercel.app,https://tatsat-nrgs.vercel.app"
     )
 
-    # Extra origins for browser dev (LAN / Docker bridge). Set CORS_ORIGIN_REGEX= to disable.
+    # Extra origins for browser dev (LAN / Docker bridge) and Vercel previews. Set CORS_ORIGIN_REGEX= to disable.
     cors_origin_regex: str = (
         r"^https?://(localhost|127\.0\.0\.1)(:\d+)?$"
         r"|^https?://\[::1\](:\d+)?$"
         r"|^https?://192\.168\.\d{1,3}\.\d{1,3}(:\d+)?$"
         r"|^https?://10\.\d{1,3}\.\d{1,3}\.\d{1,3}(:\d+)?$"
         r"|^https?://172\.(1[6-9]|2\d|3[0-1])\.\d{1,3}\.\d{1,3}(:\d+)?$"
+        r"|^https://[\w.-]+\.vercel\.app$"
     )
 
     # WhatsApp (optional) — e.g. Twilio or Meta API base URL; leave empty to disable

@@ -1,4 +1,5 @@
 import logging
+import os
 import time
 from typing import Annotated
 
@@ -39,6 +40,12 @@ if not origins:
         "http://localhost:5173",
     ]
     log.warning("CORS_ORIGINS empty; using default dev origins (set CORS_ORIGINS in production).")
+
+# Render: always allow the live Vercel site even if CORS_ORIGINS env was set to dev-only.
+if os.environ.get("RENDER", "").lower() in ("true", "1", "yes"):
+    for origin in ("https://tatsat.vercel.app", "https://tatsat-nrgs.vercel.app"):
+        if origin not in origins:
+            origins.append(origin)
 
 _cors_kw: dict = {
     "allow_origins": origins,
