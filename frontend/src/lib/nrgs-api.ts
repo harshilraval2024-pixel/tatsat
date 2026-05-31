@@ -1,28 +1,24 @@
 /** API client for Tatsat NRGS FastAPI. JWT is stored in localStorage (see security note in README or .env.example). */
 
-import { DEFAULT_PRODUCTION_API_ORIGIN } from "@/lib/api-origin";
+import { DEFAULT_PRODUCTION_API_ORIGIN, resolvePublicApiOrigin } from "@/lib/api-origin";
 
 export const ADMIN_JWT_KEY = "nrgs_admin_jwt";
 
 export { DEFAULT_PRODUCTION_API_ORIGIN };
 
 /**
- * Browser (dev, no NEXT_PUBLIC_API_URL): use Next.js rewrite `/nrgs-api/*` → FastAPI (same page origin → no CORS).
- * Server / SSR: call FastAPI directly (rewrites do not apply to server-side fetch).
- * Production: defaults to {@link DEFAULT_PRODUCTION_API_ORIGIN}; set NEXT_PUBLIC_API_URL to override.
+ * Browser (no NEXT_PUBLIC_API_URL): same-origin `/nrgs-api/*` → proxied to FastAPI (no CORS).
+ * Server / SSR: direct API origin (rewrites do not apply server-side).
  */
 export function getApiBase(): string {
   const raw = process.env.NEXT_PUBLIC_API_URL?.trim();
   if (raw) {
     return raw.replace(/\/$/, "");
   }
-  if (process.env.NODE_ENV === "production") {
-    return DEFAULT_PRODUCTION_API_ORIGIN;
-  }
   if (typeof window !== "undefined") {
     return "/nrgs-api";
   }
-  return "http://127.0.0.1:8000";
+  return resolvePublicApiOrigin();
 }
 
 function apiUrl(path: string): string {
