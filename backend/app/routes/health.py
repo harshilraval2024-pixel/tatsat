@@ -38,13 +38,14 @@ async def health_db() -> JSONResponse:
         async with AsyncSessionLocal() as session:
             await session.execute(text("SELECT 1"))
         return JSONResponse({"status": "ok", "database": "connected"})
-    except SQLAlchemyError:
+    except Exception as exc:
         log.exception("Database health check failed")
         return JSONResponse(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             content={
                 "status": "error",
                 "database": "disconnected",
+                "error": type(exc).__name__,
                 "hint": _db_config_hint(),
             },
         )
