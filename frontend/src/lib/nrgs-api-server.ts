@@ -1,6 +1,6 @@
 /** Server-side API base (SSR / Route Handlers). Rewrites do not apply here. */
 
-import { DEFAULT_PRODUCTION_API_ORIGIN } from "@/lib/nrgs-api";
+import { DEFAULT_PRODUCTION_API_ORIGIN } from "@/lib/api-origin";
 
 export function getApiBaseServer(): string {
   const raw = process.env.NEXT_PUBLIC_API_URL?.trim();

@@ -1,12 +1,14 @@
 import type { NextConfig } from "next";
+import { resolvePublicApiOrigin } from "./src/lib/api-origin";
 
 const nextConfig: NextConfig = {
-  /** Same-origin proxy so the browser never hits cross-origin CORS to FastAPI in dev. */
+  /** Dev: proxy to local FastAPI. Vercel: proxy to Render (127.0.0.1 is blocked in production). */
   async rewrites() {
+    const target = resolvePublicApiOrigin();
     return [
       {
         source: "/nrgs-api/:path*",
-        destination: "http://127.0.0.1:8000/:path*",
+        destination: `${target}/:path*`,
       },
     ];
   },
