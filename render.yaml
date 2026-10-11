@@ -1,10 +1,10 @@
 # Render Blueprint — https://render.com/docs/blueprint-spec
 # New Blueprint from repo, or: Web Service → Root Directory: backend (matches rootDir below).
 
-databases:
-  - name: solar-estimator-db
-    databaseName: solar_estimator
-    plan: free
+# Database: a free Neon Postgres (https://neon.com) is used instead of a Render
+# database (Render's free Postgres expires after 30 days). Create the Neon project,
+# then paste its connection string into the DATABASE_URL variable in the Render
+# dashboard. See backend/README.md ("Free database on Neon").
 
 services:
   - type: web
@@ -17,9 +17,7 @@ services:
     healthCheckPath: /health
     envVars:
       - key: DATABASE_URL
-        fromDatabase:
-          name: solar-estimator-db
-          property: connectionString
+        sync: false  # set in the Render dashboard (Neon connection string)
       - key: JWT_SECRET
         generateValue: true
       - key: CORS_ORIGINS

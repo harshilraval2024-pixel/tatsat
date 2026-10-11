@@ -119,7 +119,7 @@ def upgrade() -> None:
         sa.Column("price_label", sa.String(120), nullable=True),
         sa.Column("benefits_json", sa.Text(), nullable=False, server_default="[]"),
         sa.Column("sort_order", sa.Integer(), nullable=False, server_default="0"),
-        sa.Column("is_active", sa.Boolean(), nullable=False, server_default=sa.text("1")),
+        sa.Column("is_active", sa.Boolean(), nullable=False, server_default=sa.true()),
         sa.PrimaryKeyConstraint("id"),
         sa.UniqueConstraint("slug", name="uq_cms_services_slug"),
     )

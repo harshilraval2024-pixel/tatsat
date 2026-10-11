@@ -59,6 +59,27 @@ Render sets **`RENDER=true`** and **`PORT`** automatically. The API serves **`GE
 
 If the service failed before: a common issue was only setting `DATABASE_URL` while the sync URL stayed on `localhost`, so Alembic and the sync engine never used your Render database. That is normalized in `app.config` now.
 
+## Free database on Neon
+
+[Neon](https://neon.com) has a permanent free plan (1 GB storage, no card, no expiry; compute
+suspends after 5 idle minutes and wakes on the next request).
+
+1. Sign up at neon.com, **Create project** (pick the region closest to your Render service).
+2. In the project's **Connect** panel, turn **Connection pooling OFF** and copy the connection
+   string (`postgresql://…neon.tech/neondb?sslmode=require`).
+3. Render dashboard → your API service → **Environment** → set `DATABASE_URL` to that string,
+   plus `JWT_SECRET` (random, 32+ chars). Save to redeploy.
+4. Create tables and starting data from your own machine (free Render services have no shell):
+
+   ```powershell
+   cd backend
+   $env:DATABASE_URL = "<the Neon connection string>"
+   .\.venv\Scripts\alembic upgrade head
+   $env:ADMIN_INITIAL_PASSWORD = "<strong password, 12+ chars>"
+   .\.venv\Scripts\python -m app.scripts.seed_data
+   ```
+5. Check `https://<your-api>/health/db` → `"database":"connected"`.
+
 ## Docker (PostgreSQL)
 
 From `backend/`:

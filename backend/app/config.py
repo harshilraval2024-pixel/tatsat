@@ -13,11 +13,12 @@ _DEFAULT_JWT_SECRET = "change-me-in-production-use-long-random-string"
 
 
 def _strip_ssl_params(url: str) -> str:
-    """Remove sslmode/ssl query params (asyncpg takes TLS via connect_args instead)."""
+    """Remove libpq-only query params (asyncpg takes TLS via connect_args instead)."""
     if "?" not in url:
         return url
     base, _, query = url.partition("?")
-    kept = [p for p in query.split("&") if p.split("=", 1)[0].lower() not in ("sslmode", "ssl")]
+    drop = ("sslmode", "ssl", "channel_binding")  # libpq-only; asyncpg rejects them
+    kept = [p for p in query.split("&") if p.split("=", 1)[0].lower() not in drop]
     return base + ("?" + "&".join(kept) if kept else "")
 
 
