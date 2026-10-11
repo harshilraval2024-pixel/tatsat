@@ -12,6 +12,15 @@ _DEFAULT_PG_SYNC = "postgresql://postgres:postgres@127.0.0.1:5432/solar_estimato
 _DEFAULT_JWT_SECRET = "change-me-in-production-use-long-random-string"
 
 
+def _strip_ssl_params(url: str) -> str:
+    """Remove sslmode/ssl query params (asyncpg takes TLS via connect_args instead)."""
+    if "?" not in url:
+        return url
+    base, _, query = url.partition("?")
+    kept = [p for p in query.split("&") if p.split("=", 1)[0].lower() not in ("sslmode", "ssl")]
+    return base + ("?" + "&".join(kept) if kept else "")
+
+
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
         env_file=(".env", "env"),
@@ -64,6 +73,11 @@ class Settings(BaseSettings):
     def _normalize_database_urls(self) -> "Settings":
         u = (self.database_url or "").strip()
 
+        # Heroku-style "postgres://" is not understood by SQLAlchemy 2; treat as postgresql://.
+        if u.startswith("postgres://"):
+            u = "postgresql://" + u[len("postgres://"):]
+            self.database_url = u
+
         # Local SQLite: one URL drives both engines.
         if u.startswith("sqlite+aiosqlite"):
             self.database_url_sync = u.replace("sqlite+aiosqlite", "sqlite", 1)
@@ -72,7 +86,10 @@ class Settings(BaseSettings):
         # Render / Heroku-style: paste `postgresql://...` (psycopg2-style). Async engine needs +asyncpg.
         if u.startswith("postgresql://") and not u.startswith("postgresql+asyncpg"):
             self.database_url_sync = u
-            self.database_url = u.replace("postgresql://", "postgresql+asyncpg://", 1)
+            # asyncpg rejects psycopg2-style ?sslmode=… — TLS is configured in app.database.
+            self.database_url = _strip_ssl_params(
+                u.replace("postgresql://", "postgresql+asyncpg://", 1)
+            )
             return self
 
         # Only DATABASE_URL set to async URL — sync was still default localhost (breaks Alembic & sync engine).

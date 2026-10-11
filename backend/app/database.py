@@ -30,8 +30,10 @@ elif "postgresql+asyncpg" in _du and (
     or "sslmode=require" in settings.database_url.lower()
     or "ssl=true" in settings.database_url.lower()
 ):
-    # Render managed Postgres + asyncpg typically needs TLS for external hostname connections.
-    _engine_kw["connect_args"] = {"ssl": True}
+    # Render managed Postgres: encrypt the connection. "require" does not verify the
+    # server certificate/hostname, which fails for Render's internal hostnames when
+    # ssl=True (verify-full) is used.
+    _engine_kw["connect_args"] = {"ssl": "require"}
 
 async_engine = create_async_engine(
     settings.database_url,
