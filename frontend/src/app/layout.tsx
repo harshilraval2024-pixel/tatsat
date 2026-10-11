@@ -3,6 +3,7 @@ import { Manrope, Syne } from "next/font/google";
 import "./globals.css";
 import { Navbar } from "@/components/layout/Navbar";
 import { Footer } from "@/components/layout/Footer";
+import { PageBackdrop } from "@/components/layout/PageBackdrop";
 import { WhatsAppFloat } from "@/components/WhatsAppFloat";
 import { Providers } from "./providers";
 import { site } from "@/lib/site";
@@ -77,9 +78,14 @@ export default async function RootLayout({
 }>) {
   const cfg = await getSiteConfig();
   return (
-    <html lang="en" className={`dark h-full ${manrope.variable} ${syne.variable}`}>
+    <html
+      lang="en"
+      data-theme={cfg.theme}
+      className={`${cfg.theme === "light" ? "" : "dark "}h-full ${manrope.variable} ${syne.variable}`}
+    >
       <body className="flex min-h-full flex-col font-sans antialiased">
         <SiteConfigProvider key={siteConfigProviderKey(cfg)} initial={cfg}>
+          <PageBackdrop />
           <Navbar />
           <main className="flex-1">{children}</main>
           <Footer />

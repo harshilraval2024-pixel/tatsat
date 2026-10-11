@@ -1,7 +1,9 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { toast } from "sonner";
 import { jfetch } from "@/lib/nrgs-api";
+import { useConfirm } from "@/components/admin/useConfirm";
 
 type ServiceOut = {
   id: number;
@@ -30,20 +32,66 @@ export function CmsServicesSection() {
   const [iconName, setIconName] = useState<string>("home");
   const [priceLabel, setPriceLabel] = useState("");
   const [benefitsText, setBenefitsText] = useState("");
+  const [isActive, setIsActive] = useState(true);
   const [busy, setBusy] = useState(false);
+  /** The service being edited, or null when the form is in "add" mode. */
+  const [editing, setEditing] = useState<ServiceOut | null>(null);
+  const formRef = useRef<HTMLFormElement>(null);
+  const { confirm: askConfirm, dialog: confirmDialog } = useConfirm();
 
   const load = useCallback(() => {
     jfetch<ServiceOut[]>("/admin/services")
       .then(setRows)
-      .catch((e) => setMsg(String(e)));
+      .catch((e) => setMsg(e instanceof Error ? e.message : String(e)));
   }, []);
 
   useEffect(() => {
     load();
   }, [load]);
 
-  async function createService(e: React.FormEvent) {
+  function resetForm() {
+    setEditing(null);
+    setSlug("");
+    setTitle("");
+    setDescription("");
+    setIconName("home");
+    setPriceLabel("");
+    setBenefitsText("");
+    setIsActive(true);
+  }
+
+  function startEdit(r: ServiceOut) {
+    setEditing(r);
+    setSlug(r.slug);
+    setTitle(r.title);
+    setDescription(r.description);
+    setIconName(r.icon_name || "home");
+    setPriceLabel(r.price_label ?? "");
+    setBenefitsText(r.benefits.join("\n"));
+    setIsActive(r.is_active);
+    setMsg(null);
+    requestAnimationFrame(() => formRef.current?.scrollIntoView({ behavior: "smooth", block: "center" }));
+  }
+
+  async function saveService(e: React.FormEvent) {
     e.preventDefault();
+    const isEdit = editing !== null;
+    if (
+      !(await askConfirm(
+        isEdit
+          ? {
+              title: "Save changes to this service?",
+              message: `"${title.trim() || "Untitled"}" will be updated on the public Services page.`,
+              confirmLabel: "Save changes",
+            }
+          : {
+              title: "Publish this service?",
+              message: `"${title.trim() || "Untitled"}" will appear on the public Services page.`,
+              confirmLabel: "Publish service",
+            },
+      ))
+    )
+      return;
     setMsg(null);
     setBusy(true);
     try {
@@ -51,50 +99,65 @@ export function CmsServicesSection() {
         .split("\n")
         .map((s) => s.trim())
         .filter(Boolean);
-      await jfetch<ServiceOut>("/admin/services", {
-        method: "POST",
-        body: JSON.stringify({
-          slug: slug.trim().toLowerCase().replace(/\s+/g, "-"),
-          title,
-          description,
-          icon_name: iconName,
-          price_label: priceLabel.trim() || null,
-          benefits,
-          sort_order: rows.length,
-          is_active: true,
-        }),
-      });
-      setSlug("");
-      setTitle("");
-      setDescription("");
-      setPriceLabel("");
-      setBenefitsText("");
+      const payload = {
+        slug: slug.trim().toLowerCase().replace(/\s+/g, "-"),
+        title,
+        description,
+        icon_name: iconName,
+        price_label: priceLabel.trim() || null,
+        benefits,
+        is_active: isActive,
+      };
+      if (editing) {
+        await jfetch<ServiceOut>(`/admin/services/${editing.id}`, {
+          method: "PUT",
+          body: JSON.stringify(payload),
+        });
+      } else {
+        await jfetch<ServiceOut>("/admin/services", {
+          method: "POST",
+          body: JSON.stringify({ ...payload, sort_order: rows.length }),
+        });
+      }
+      resetForm();
       load();
-      setMsg("Service created.");
+      toast.success(isEdit ? "Service updated." : "Service created.");
+      setMsg(isEdit ? "Service updated." : "Service created.");
     } catch (err) {
-      setMsg(String(err));
+      setMsg(err instanceof Error ? err.message : String(err));
     } finally {
       setBusy(false);
     }
   }
 
   async function remove(id: number) {
-    if (!confirm("Delete this service?")) return;
+    if (
+      !(await askConfirm({
+        title: "Delete this service?",
+        message: "The service will be permanently removed from the website. This cannot be undone.",
+        confirmLabel: "Delete service",
+        danger: true,
+      }))
+    )
+      return;
     setMsg(null);
     try {
       await jfetch(`/admin/services/${id}`, { method: "DELETE" });
+      if (editing?.id === id) resetForm();
       load();
     } catch (e) {
-      setMsg(String(e));
+      setMsg(e instanceof Error ? e.message : String(e));
     }
   }
 
   return (
     <div className="space-y-8">
+      {confirmDialog}
       <div>
         <h2 className="font-display text-lg font-bold text-white">Solar services</h2>
         <p className="mt-2 text-sm text-muted">
           Slug becomes the URL anchor (#slug). Icons: home, building, wrench, doc — matching the public site icons.
+          Untick &quot;Show on website&quot; to hide a service without deleting it.
         </p>
       </div>
       {msg ? <p className="text-sm text-secondary">{msg}</p> : null}
@@ -107,33 +170,65 @@ export function CmsServicesSection() {
               <th className="px-3 py-2">Title</th>
               <th className="px-3 py-2">Icon</th>
               <th className="px-3 py-2">Active</th>
-              <th className="px-3 py-2" />
+              <th className="px-3 py-2 text-right">Actions</th>
             </tr>
           </thead>
           <tbody>
-            {rows.map((r) => (
-              <tr key={r.id} className="border-t border-white/10">
-                <td className="px-3 py-2 font-mono text-xs text-primary">{r.slug}</td>
-                <td className="px-3 py-2 text-white">{r.title}</td>
-                <td className="px-3 py-2 text-muted">{r.icon_name}</td>
-                <td className="px-3 py-2">{r.is_active ? "Yes" : "No"}</td>
-                <td className="px-3 py-2 text-right">
-                  <button
-                    type="button"
-                    className="text-xs font-semibold text-accent hover:underline"
-                    onClick={() => remove(r.id)}
-                  >
-                    Delete
-                  </button>
+            {rows.length === 0 ? (
+              <tr className="border-t border-white/10">
+                <td className="px-3 py-4 text-muted" colSpan={5}>
+                  No services yet. Add one below.
                 </td>
               </tr>
-            ))}
+            ) : null}
+            {rows.map((r) => {
+              const active = editing?.id === r.id;
+              return (
+                <tr key={r.id} className={`border-t border-white/10 ${active ? "bg-primary/5" : ""}`}>
+                  <td className="px-3 py-2 font-mono text-xs text-primary">{r.slug}</td>
+                  <td className="px-3 py-2 text-white">{r.title}</td>
+                  <td className="px-3 py-2 text-muted">{r.icon_name}</td>
+                  <td className="px-3 py-2">{r.is_active ? "Yes" : "No"}</td>
+                  <td className="px-3 py-2 text-right">
+                    <div className="flex justify-end gap-2">
+                      <button
+                        type="button"
+                        className="rounded-full border border-primary/50 px-3 py-1.5 text-xs font-semibold text-primary hover:bg-primary/10"
+                        onClick={() => startEdit(r)}
+                      >
+                        {active ? "Editing…" : "Edit"}
+                      </button>
+                      <button
+                        type="button"
+                        className="rounded-full border border-accent/50 px-3 py-1.5 text-xs font-semibold text-accent hover:bg-accent/10"
+                        onClick={() => remove(r.id)}
+                      >
+                        Delete
+                      </button>
+                    </div>
+                  </td>
+                </tr>
+              );
+            })}
           </tbody>
         </table>
       </div>
 
-      <form onSubmit={createService} className="space-y-4 rounded-2xl border border-white/10 p-4">
-        <p className="text-sm font-semibold text-white">Add service</p>
+      <form ref={formRef} onSubmit={saveService} className="space-y-4 rounded-2xl border border-white/10 p-4">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <p className="text-sm font-semibold text-white">
+            {editing ? `Edit service — ${editing.title}` : "Add service"}
+          </p>
+          {editing ? (
+            <button
+              type="button"
+              onClick={resetForm}
+              className="rounded-full border border-white/20 px-3 py-1.5 text-xs font-semibold text-muted hover:text-white"
+            >
+              Cancel edit
+            </button>
+          ) : null}
+        </div>
         <div className="grid gap-4 sm:grid-cols-2">
           <div>
             <label className={label}>Slug (url-safe)</label>
@@ -181,13 +276,17 @@ export function CmsServicesSection() {
               placeholder={"Line 1\nLine 2"}
             />
           </div>
+          <label className="flex items-center gap-2 text-sm text-muted sm:col-span-2">
+            <input type="checkbox" checked={isActive} onChange={(e) => setIsActive(e.target.checked)} />
+            Show on website
+          </label>
         </div>
         <button
           type="submit"
           disabled={busy}
           className="rounded-2xl bg-primary px-6 py-2 text-sm font-bold uppercase tracking-wide text-bg disabled:opacity-50"
         >
-          {busy ? "Saving…" : "Create service"}
+          {busy ? "Saving…" : editing ? "Save changes" : "Create service"}
         </button>
       </form>
     </div>

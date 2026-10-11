@@ -109,6 +109,7 @@ async def _get_location_multiplier(
                 T.LocationPricing.district_id == district_id,
                 T.LocationPricing.is_active.is_(True),
             )
+            .order_by(T.LocationPricing.id.desc())  # newest entry wins
             .limit(1)
         )
         d = r.scalar_one_or_none()
@@ -121,6 +122,7 @@ async def _get_location_multiplier(
             T.LocationPricing.district_id.is_(None),
             T.LocationPricing.is_active.is_(True),
         )
+        .order_by(T.LocationPricing.id.desc())  # newest entry wins
         .limit(1)
     )
     s = r2.scalar_one_or_none()

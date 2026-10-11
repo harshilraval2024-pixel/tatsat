@@ -33,7 +33,7 @@ def project_to_out(p: T.CmsProject) -> ProjectOut:
         completion_date=p.completion_date,
         sort_order=p.sort_order,
         images=[
-            ProjectImageOut(url=im.path, alt=im.alt_text or "", sort_order=im.sort_order)
+            ProjectImageOut(id=im.id, url=im.path, alt=im.alt_text or "", sort_order=im.sort_order)
             for im in imgs
         ],
     )

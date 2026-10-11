@@ -1,7 +1,7 @@
 import logging
 from typing import Annotated, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -22,6 +22,7 @@ from app.services.estimate_service import (
     estimate_request_to_lead_dict,
 )
 from app.services.pdf_service import render_estimate_pdf
+from app.utils.ratelimit import client_ip, limiter
 
 router = APIRouter(tags=["public"])
 log = logging.getLogger(__name__)
@@ -162,16 +163,22 @@ async def run_estimate_and_save(
 @router.post("/estimate", response_model=EstimateResponse)
 async def post_estimate(
     body: EstimateRequest,
+    request: Request,
     session: Annotated[AsyncSession, Depends(get_db)],
 ) -> EstimateResponse:
+    limiter.check(f"estimate:{client_ip(request)}", 30, 60)
+    if body.save_lead:
+        limiter.check(f"lead:{client_ip(request)}", 10, 3600)
     return await run_estimate_and_save(body, session)
 
 
 @router.post("/estimate/pdf", response_class=Response)
 async def post_estimate_pdf(
     body: EstimateRequest,
+    request: Request,
     session: Annotated[AsyncSession, Depends(get_db)],
 ) -> Response:
+    limiter.check(f"pdf:{client_ip(request)}", 15, 60)
     try:
         result = await compute_estimate(session, body)
     except ValueError as e:

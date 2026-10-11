@@ -1,3 +1,4 @@
+import os
 from functools import lru_cache
 
 from pydantic import model_validator
@@ -6,6 +7,9 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 # Defaults used to detect “only DATABASE_URL was set” (e.g. Render) so we can derive the sync URL.
 _DEFAULT_PG_ASYNC = "postgresql+asyncpg://postgres:postgres@127.0.0.1:5432/solar_estimator"
 _DEFAULT_PG_SYNC = "postgresql://postgres:postgres@127.0.0.1:5432/solar_estimator"
+
+
+_DEFAULT_JWT_SECRET = "change-me-in-production-use-long-random-string"
 
 
 class Settings(BaseSettings):
@@ -22,7 +26,7 @@ class Settings(BaseSettings):
     # Sync URL for Alembic / scripts (derived from DATABASE_URL on Render if you only set that)
     database_url_sync: str = _DEFAULT_PG_SYNC
 
-    jwt_secret: str = "change-me-in-production-use-long-random-string"
+    jwt_secret: str = _DEFAULT_JWT_SECRET
     jwt_algorithm: str = "HS256"
     jwt_exp_hours: int = 24
 
@@ -40,12 +44,21 @@ class Settings(BaseSettings):
         r"|^https?://192\.168\.\d{1,3}\.\d{1,3}(:\d+)?$"
         r"|^https?://10\.\d{1,3}\.\d{1,3}\.\d{1,3}(:\d+)?$"
         r"|^https?://172\.(1[6-9]|2\d|3[0-1])\.\d{1,3}\.\d{1,3}(:\d+)?$"
-        r"|^https://[\w.-]+\.vercel\.app$"
     )
 
     # WhatsApp (optional) — e.g. Twilio or Meta API base URL; leave empty to disable
     whatsapp_api_url: str = ""
     whatsapp_api_token: str = ""
+
+    @model_validator(mode="after")
+    def _require_strong_jwt_secret(self) -> "Settings":
+        weak = self.jwt_secret == _DEFAULT_JWT_SECRET or len(self.jwt_secret) < 32
+        on_render = os.environ.get("RENDER", "").lower() in ("true", "1", "yes")
+        if weak and on_render:
+            raise ValueError(
+                "JWT_SECRET must be set to a random string of at least 32 characters in production."
+            )
+        return self
 
     @model_validator(mode="after")
     def _normalize_database_urls(self) -> "Settings":

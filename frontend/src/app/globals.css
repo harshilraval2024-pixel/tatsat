@@ -106,3 +106,306 @@ body {
   outline: 2px solid color-mix(in oklab, var(--primary) 70%, white);
   outline-offset: 3px;
 }
+
+/* ==========================================================================
+   Solar Light theme (selected in Admin → Site → Website theme)
+   Tailwind's `text-white` / `border-white/*` resolve through --color-white, so
+   remapping it to deep navy flips every existing component to a light layout.
+   ========================================================================== */
+html[data-theme="light"] {
+  --bg: #fffdf8;
+  --bg-elevated: #ffffff;
+  --primary: #f6b400;
+  --secondary: #ff8a00;
+  --accent: #f2530a;
+  --muted: #566178;
+  --color-white: #0f1b33;
+  color-scheme: light;
+}
+
+html[data-theme="light"] body {
+  background:
+    radial-gradient(900px 520px at 6% -8%, color-mix(in oklab, #ffd000 30%, transparent), transparent 62%),
+    radial-gradient(820px 520px at 100% 0%, color-mix(in oklab, #ff8a00 17%, transparent), transparent 58%),
+    linear-gradient(180deg, #fffdf8 0%, #fff8e8 100%);
+  background-attachment: fixed;
+  color: #0f1b33;
+}
+
+html[data-theme="light"] ::selection {
+  background: color-mix(in oklab, #ffd000 55%, transparent);
+  color: #0f1b33;
+}
+
+html[data-theme="light"] .text-primary {
+  color: #c27c00;
+}
+html[data-theme="light"] .text-secondary {
+  color: #e06a00;
+}
+html[data-theme="light"] .text-accent {
+  color: #d9420a;
+}
+
+html[data-theme="light"] .glass-panel {
+  background: linear-gradient(160deg, #ffffff, #fffaf0);
+  border: 1px solid color-mix(in oklab, #f6b400 42%, transparent);
+  box-shadow: 0 1px 0 #fff inset, 0 18px 50px color-mix(in oklab, #ff9a00 12%, transparent);
+  backdrop-filter: none;
+  transition: transform 0.35s cubic-bezier(0.2, 0.7, 0.2, 1), box-shadow 0.35s ease, border-color 0.35s ease;
+}
+html[data-theme="light"] .glass-panel:hover {
+  transform: translateY(-4px);
+  border-color: color-mix(in oklab, #f6b400 80%, transparent);
+  box-shadow: 0 1px 0 #fff inset, 0 26px 60px color-mix(in oklab, #ff9a00 22%, transparent);
+}
+
+html[data-theme="light"] header.sticky {
+  box-shadow: 0 8px 30px color-mix(in oklab, #ff9a00 14%, transparent) !important;
+}
+
+/* Primary CTA: animated warm gradient, white label like the brand mock-up */
+html[data-theme="light"] .bg-gradient-to-r.from-primary {
+  color: #fff;
+  background-size: 220% 100%;
+  animation: gradient-pan 7s ease-in-out infinite;
+  box-shadow: 0 10px 30px color-mix(in oklab, #ff8a00 38%, transparent);
+}
+
+html[data-theme="light"] .text-gradient-brand {
+  background: linear-gradient(110deg, #f6b400, #ff8a00 50%, #f2530a);
+  background-size: 200% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  animation: gradient-pan 8s ease-in-out infinite;
+}
+
+html[data-theme="light"] .drop-shadow-\[0_0_28px_rgba\(255\,106\,0\,0\.35\)\] {
+  filter: none;
+}
+
+/* Eyebrow labels flanked by thin lines (visible on the light hero) */
+html[data-theme="light"] .eyebrow-lines {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.9rem;
+  color: #c27c00;
+}
+html[data-theme="light"] .eyebrow-lines::before,
+html[data-theme="light"] .eyebrow-lines::after {
+  content: "";
+  width: 2.6rem;
+  height: 2px;
+  border-radius: 2px;
+  background: linear-gradient(90deg, transparent, #f6b400);
+}
+html[data-theme="light"] .eyebrow-lines::after {
+  transform: scaleX(-1);
+}
+
+/* ---- Motion + graphics (used by <HeroGraphic />) ---- */
+@keyframes gradient-pan {
+  0%,
+  100% {
+    background-position: 0% 50%;
+  }
+  50% {
+    background-position: 100% 50%;
+  }
+}
+
+@keyframes node-pulse {
+  0%,
+  100% {
+    transform: scale(1);
+    opacity: 0.7;
+  }
+  50% {
+    transform: scale(1.9);
+    opacity: 1;
+  }
+}
+
+@keyframes line-flow {
+  from {
+    background-position: 0 0;
+  }
+  to {
+    background-position: 160px 0;
+  }
+}
+
+@keyframes drift {
+  0%,
+  100% {
+    transform: translate3d(0, 0, 0);
+  }
+  33% {
+    transform: translate3d(12px, -18px, 0);
+  }
+  66% {
+    transform: translate3d(-10px, -8px, 0);
+  }
+}
+
+@keyframes ring-breathe {
+  0%,
+  100% {
+    transform: scale(1);
+    opacity: 0.55;
+  }
+  50% {
+    transform: scale(1.035);
+    opacity: 0.8;
+  }
+}
+
+.hero-ring {
+  transform-origin: 300px 300px;
+  transform-box: view-box;
+}
+.hero-ring-a {
+  animation: spin-slow 70s linear infinite;
+}
+.hero-ring-b {
+  animation: spin-slow 46s linear infinite reverse;
+}
+.hero-ring-c {
+  animation: spin-slow 32s linear infinite;
+}
+.hero-ring-d {
+  animation: spin-slow 90s linear infinite reverse;
+}
+.hero-core {
+  transform-origin: 300px 300px;
+  transform-box: view-box;
+  animation: ring-breathe 7s ease-in-out infinite;
+}
+
+.circuit-line {
+  height: 2px;
+  background-image: linear-gradient(90deg, transparent 0 25%, color-mix(in oklab, #f6b400 70%, transparent) 25% 60%, transparent 60% 100%);
+  background-size: 160px 2px;
+  animation: line-flow 5s linear infinite;
+}
+.circuit-node {
+  width: 9px;
+  height: 9px;
+  border-radius: 9999px;
+  background: #f6b400;
+  box-shadow: 0 0 0 4px color-mix(in oklab, #f6b400 22%, transparent);
+  animation: node-pulse 3.6s ease-in-out infinite;
+}
+.sun-particle {
+  position: absolute;
+  border-radius: 9999px;
+  background: radial-gradient(circle, #ffd000, #ff8a00 70%, transparent);
+  animation: drift 11s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-spin-slow,
+  .animate-spin-slow-reverse,
+  .animate-pulse-ring,
+  .animate-float,
+  .hero-ring,
+  .hero-core,
+  .circuit-line,
+  .circuit-node,
+  .sun-particle,
+  html[data-theme="light"] .text-gradient-brand,
+  html[data-theme="light"] .bg-gradient-to-r.from-primary {
+    animation: none !important;
+  }
+}
+
+/* The brand mark ships on a black tile; on light pages show just the round coin. */
+html[data-theme="light"] img[src*="tatsat-mark"] {
+  clip-path: circle(35.5% at 50% 50%);
+  transform: scale(1.42);
+  border-radius: 0;
+}
+
+/* Dark-tinted utility surfaces become warm cream on the light theme */
+html[data-theme="light"] .bg-black\/40,
+html[data-theme="light"] .bg-black\/30 {
+  background-color: #fffaf0;
+}
+html[data-theme="light"] .bg-black\/20 {
+  background-color: color-mix(in oklab, #f6b400 8%, #fff);
+}
+html[data-theme="light"] .bg-black\/70 {
+  background-color: color-mix(in oklab, #0f1b33 55%, transparent);
+}
+html[data-theme="light"] input,
+html[data-theme="light"] textarea,
+html[data-theme="light"] select {
+  color: #0f1b33;
+}
+html[data-theme="light"] input:focus-visible,
+html[data-theme="light"] textarea:focus-visible,
+html[data-theme="light"] select:focus-visible {
+  border-color: #f6b400;
+  box-shadow: 0 0 0 3px color-mix(in oklab, #f6b400 28%, transparent);
+}
+
+/* Outline / ghost buttons need a solid face when they sit over the ring artwork */
+html[data-theme="light"] .border-primary\/50.bg-transparent {
+  background-color: #fff;
+  border-color: color-mix(in oklab, #f6b400 70%, transparent);
+  color: #b36f00;
+}
+html[data-theme="light"] .bg-white\/5 {
+  background-color: color-mix(in oklab, #fff 85%, #f6b400);
+}
+
+/* Text laid directly over photography keeps its bright, dark-theme colours */
+html[data-theme="light"] .on-photo {
+  --color-white: #ffffff;
+}
+html[data-theme="light"] .on-photo .text-primary {
+  color: #ffd21f;
+}
+
+/* WhatsApp chat widget */
+@keyframes wa-pop {
+  from {
+    opacity: 0;
+    transform: translateY(12px) scale(0.96);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+@keyframes wa-ping {
+  0% {
+    box-shadow: 0 0 0 0 rgba(37, 211, 102, 0.55);
+  }
+  70%,
+  100% {
+    box-shadow: 0 0 0 18px rgba(37, 211, 102, 0);
+  }
+}
+.wa-panel {
+  animation: wa-pop 0.22s ease-out both;
+  transform-origin: bottom right;
+}
+.wa-fab::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: 9999px;
+  animation: wa-ping 2.6s ease-out infinite;
+  pointer-events: none;
+}
+@media (prefers-reduced-motion: reduce) {
+  .wa-panel,
+  .wa-fab::after {
+    animation: none !important;
+  }
+}
+
+html[data-theme="light"] .bg-black\/10 {
+  background-color: color-mix(in oklab, #f6b400 5%, #fff);
+}

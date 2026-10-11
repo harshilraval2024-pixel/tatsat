@@ -220,6 +220,13 @@ def seed(session: Session) -> None:
         select(T.AdminUser).where(T.AdminUser.username == "admin")
     ).scalar_one_or_none():
         pw = os.environ.get("ADMIN_INITIAL_PASSWORD", "changeme")
+        if os.environ.get("RENDER", "").lower() in ("true", "1", "yes") and (
+            pw == "changeme" or len(pw) < 12
+        ):
+            raise SystemExit(
+                "Refusing to create admin with a weak/default password in production. "
+                "Set ADMIN_INITIAL_PASSWORD (12+ characters) and re-run."
+            )
         session.add(
             T.AdminUser(
                 username="admin",

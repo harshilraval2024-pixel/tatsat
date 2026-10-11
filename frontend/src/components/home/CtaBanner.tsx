@@ -3,6 +3,7 @@
 import { GlowButton } from "@/components/ui/GlowButton";
 import { Reveal } from "@/components/ui/Reveal";
 import { useSiteConfig } from "@/components/SiteConfigProvider";
+import { RingMark } from "@/components/ui/RingMark";
 
 export function CtaBanner() {
   const cfg = useSiteConfig();
@@ -11,6 +12,8 @@ export function CtaBanner() {
       <Reveal>
         <div className="relative overflow-hidden rounded-[2rem] border border-primary/30 bg-gradient-to-r from-bg-elevated via-bg to-bg-elevated p-10 text-center shadow-[0_0_80px_rgba(255,106,0,0.18)]">
           <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_20%_20%,rgba(255,208,0,0.18),transparent_45%),radial-gradient(circle_at_80%_0%,rgba(255,59,0,0.2),transparent_40%)]" />
+          <RingMark className="pointer-events-none absolute -left-24 top-1/2 h-72 w-72 -translate-y-1/2 opacity-30" />
+          <RingMark className="pointer-events-none absolute -right-24 top-1/2 h-72 w-72 -translate-y-1/2 opacity-30" />
           <div className="relative space-y-4">
             <p className="text-xs font-semibold uppercase tracking-[0.3em] text-secondary">Ready when you are</p>
             <h2 className="font-display text-3xl font-semibold text-white sm:text-4xl">

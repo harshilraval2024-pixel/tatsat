@@ -63,7 +63,7 @@ export default async function ProjectsPage() {
                   <div className="absolute inset-0 bg-black/50" />
                 )}
                 <div className="absolute inset-0 bg-gradient-to-t from-black via-black/20 to-transparent" />
-                <div className="absolute bottom-3 left-3 right-3">
+                <div className="on-photo absolute bottom-3 left-3 right-3">
                   <p className="font-display text-lg font-semibold text-white">{p.title}</p>
                   <p className="text-xs text-primary">{p.location}</p>
                 </div>

@@ -51,9 +51,10 @@ if os.environ.get("RENDER", "").lower() in ("true", "1", "yes"):
 
 _cors_kw: dict = {
     "allow_origins": origins,
-    "allow_credentials": True,
-    "allow_methods": ["*"],
-    "allow_headers": ["*"],
+    # Auth is a Bearer header, not cookies, so credentialed CORS is not needed.
+    "allow_credentials": False,
+    "allow_methods": ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+    "allow_headers": ["Authorization", "Content-Type"],
 }
 _rx = (settings.cors_origin_regex or "").strip()
 if _rx:
@@ -90,6 +91,18 @@ async def startup_check() -> None:
             "Render deploy is using localhost DATABASE_URL — API routes like /states will fail "
             "until you set DATABASE_URL to your Render Postgres Internal URL."
         )
+
+
+@app.middleware("http")
+async def security_headers(request: Request, call_next):  # type: ignore[no-untyped-def]
+    response: Response = await call_next(request)
+    response.headers.setdefault("X-Content-Type-Options", "nosniff")
+    response.headers.setdefault("X-Frame-Options", "DENY")
+    response.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
+    response.headers.setdefault("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
+    if request.url.path.startswith("/uploads/"):
+        response.headers["Content-Security-Policy"] = "default-src 'none'; img-src 'self'"
+    return response
 
 
 @app.middleware("http")

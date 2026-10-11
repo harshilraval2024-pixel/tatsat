@@ -1,5 +1,5 @@
 import type { Metadata } from "next";
-import { ContactForm } from "@/components/forms/ContactForm";
+import { WhatsAppContactCard } from "@/components/forms/WhatsAppContactCard";
 import { SectionHeading } from "@/components/ui/SectionHeading";
 import { Reveal } from "@/components/ui/Reveal";
 import { getSiteConfig } from "@/lib/get-site-config";
@@ -21,9 +21,9 @@ export default async function ContactPage() {
   return (
     <div className="mx-auto max-w-6xl px-4 py-16 sm:px-6 lg:px-8">
       <SectionHeading
-        eyebrow="Visit / call"
-        title="We’re easy to reach from Gift City to Surat"
-        subtitle="Walk-ins by appointment — bring recent bills and roof photos if you can."
+        eyebrow={cfg.contact.page_eyebrow}
+        title={cfg.contact.page_title}
+        subtitle={cfg.contact.page_subtitle}
       />
 
       <div className="grid gap-8 lg:grid-cols-2">
@@ -60,7 +60,7 @@ export default async function ContactPage() {
         </Reveal>
 
         <Reveal delay={80}>
-          <ContactForm />
+          <WhatsAppContactCard />
         </Reveal>
       </div>
 

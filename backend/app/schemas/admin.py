@@ -5,8 +5,8 @@ from pydantic import BaseModel, Field
 
 
 class AdminLoginRequest(BaseModel):
-    username: str
-    password: str
+    username: str = Field(..., min_length=1, max_length=64)
+    password: str = Field(..., min_length=1, max_length=128)
 
 
 class AdminTokenResponse(BaseModel):
@@ -15,25 +15,25 @@ class AdminTokenResponse(BaseModel):
 
 
 class PanelPricingOut(BaseModel):
-    cost_per_watt: float
+    cost_per_watt: float = Field(..., ge=0, le=100000)
 
 
 class InverterPricingOut(BaseModel):
-    cost_per_kw: float
+    cost_per_kw: float = Field(..., ge=0, le=10000000)
 
 
 class BatteryPricingOut(BaseModel):
-    cost_per_kwh: float
+    cost_per_kwh: float = Field(..., ge=0, le=10000000)
 
 
 class InstallationPricingOut(BaseModel):
-    base_amount: float
-    per_kw_amount: float
+    base_amount: float = Field(..., ge=0, le=100000000)
+    per_kw_amount: float = Field(..., ge=0, le=100000000)
 
 
 class MiscPricingOut(BaseModel):
-    fixed_amount: float
-    percent_of_subtotal: float
+    fixed_amount: float = Field(..., ge=0, le=100000000)
+    percent_of_subtotal: float = Field(..., ge=0, le=1)
 
 
 class RoofTypePricingItem(BaseModel):
@@ -45,10 +45,10 @@ class RoofTypePricingItem(BaseModel):
 
 
 class EstimationSettingsOut(BaseModel):
-    rupees_per_unit_default: float
-    units_per_kw_per_month: float
-    min_system_kw: float
-    max_system_kw: float
+    rupees_per_unit_default: float = Field(..., gt=0, le=100)
+    units_per_kw_per_month: float = Field(..., gt=0, le=1000)
+    min_system_kw: float = Field(..., gt=0, le=1000)
+    max_system_kw: float = Field(..., gt=0, le=10000)
 
 
 class PricingBundleOut(BaseModel):
@@ -61,6 +61,13 @@ class PricingBundleOut(BaseModel):
     estimation: EstimationSettingsOut
 
 
+class RoofTypePricingUpdate(BaseModel):
+    id: int
+    cost_multiplier: Optional[float] = Field(None, gt=0, le=100)
+    structure_fixed: Optional[float] = Field(None, ge=0, le=100000000)
+    structure_per_kw: Optional[float] = Field(None, ge=0, le=100000000)
+
+
 class PricingBundleUpdate(BaseModel):
     panel: Optional[PanelPricingOut] = None
     inverter: Optional[InverterPricingOut] = None
@@ -68,7 +75,7 @@ class PricingBundleUpdate(BaseModel):
     installation: Optional[InstallationPricingOut] = None
     misc: Optional[MiscPricingOut] = None
     estimation: Optional[EstimationSettingsOut] = None
-    roof_types: Optional[list[dict[str, Any]]] = None
+    roof_types: Optional[list[RoofTypePricingUpdate]] = Field(None, max_length=20)
 
 
 class StateOut(BaseModel):
@@ -95,9 +102,22 @@ class SubsidyOut(BaseModel):
 
 class SubsidyIn(BaseModel):
     state_id: int
-    subsidy_type: str
-    value: float
-    max_limit: Optional[float] = None
+    subsidy_type: str = Field(..., max_length=20)
+    value: float = Field(..., ge=0, le=100000000)
+    max_limit: Optional[float] = Field(None, ge=0, le=100000000)
+    is_active: bool = True
+
+
+class SubsidyUpdate(BaseModel):
+    subsidy_type: str = Field(..., max_length=20)
+    value: float = Field(..., ge=0, le=100000000)
+    max_limit: Optional[float] = Field(None, ge=0, le=100000000)
+    is_active: bool = True
+
+
+class LocationPricingUpdate(BaseModel):
+    system_cost_multiplier: float = Field(..., gt=0, le=10)
+    label: Optional[str] = Field(None, max_length=200)
     is_active: bool = True
 
 
@@ -115,8 +135,8 @@ class LocationPricingOut(BaseModel):
 class LocationPricingIn(BaseModel):
     state_id: Optional[int] = None
     district_id: Optional[int] = None
-    system_cost_multiplier: float = 1.0
-    label: Optional[str] = None
+    system_cost_multiplier: float = Field(1.0, gt=0, le=10)
+    label: Optional[str] = Field(None, max_length=200)
     is_active: bool = True
 
 

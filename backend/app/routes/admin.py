@@ -7,6 +7,7 @@ from fastapi import (
     Depends,
     HTTPException,
     Query,
+    Request,
     Response,
     status,
 )
@@ -30,7 +31,12 @@ from app.services.site_settings import (
     site_settings_to_out,
 )
 from app.services.pdf_service import render_estimate_pdf
-from app.utils.security import create_access_token, verify_password
+from app.utils.ratelimit import client_ip, limiter
+from app.utils.security import (
+    burn_password_check,
+    create_access_token,
+    verify_password,
+)
 
 router = APIRouter(prefix="/admin", tags=["admin"])
 log = logging.getLogger(__name__)
@@ -49,19 +55,24 @@ def _pricing_missing() -> None:
 @router.post("/login", response_model=S.AdminTokenResponse)
 async def admin_login(
     body: S.AdminLoginRequest,
+    request: Request,
     session: Annotated[AsyncSession, Depends(get_db)],
 ) -> S.AdminTokenResponse:
+    # Brute-force protection: per client IP, and per username (IP header can be spoofed).
+    limiter.check(f"login-ip:{client_ip(request)}", 10, 300)
+    limiter.check(f"login-user:{body.username.lower()}", 10, 300)
     r = await session.execute(
         select(T.AdminUser).where(T.AdminUser.username == body.username)
     )
     user = r.scalar_one_or_none()
-    if not user or not verify_password(body.password, user.password_hash):
+    if not user:
+        burn_password_check(body.password)
+    # Same response for wrong password and disabled account (no account-state leak).
+    if not user or not user.is_active or not verify_password(
+        body.password, user.password_hash
+    ):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid credentials"
-        )
-    if not user.is_active:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN, detail="Account disabled"
         )
     token = create_access_token({"sub": user.username, "typ": "admin"})
     return S.AdminTokenResponse(access_token=token)
@@ -193,14 +204,15 @@ async def post_pricing(
         e.max_system_kw = body.estimation.max_system_kw
     if body.roof_types:
         for row in body.roof_types:
-            rid = int(row.get("id", 0))
-            r = await session.get(T.RoofTypePricing, rid)
-            if r and "cost_multiplier" in row:
-                r.cost_multiplier = float(row["cost_multiplier"])
-            if r and "structure_fixed" in row:
-                r.structure_fixed = float(row["structure_fixed"])
-            if r and "structure_per_kw" in row:
-                r.structure_per_kw = float(row["structure_per_kw"])
+            r = await session.get(T.RoofTypePricing, row.id)
+            if not r:
+                continue
+            if row.cost_multiplier is not None:
+                r.cost_multiplier = row.cost_multiplier
+            if row.structure_fixed is not None:
+                r.structure_fixed = row.structure_fixed
+            if row.structure_per_kw is not None:
+                r.structure_per_kw = row.structure_per_kw
     await session.commit()
     return await _bundle(session)
 
@@ -240,10 +252,7 @@ async def post_subsidy(
     session: Annotated[AsyncSession, Depends(get_db)],
     _: Annotated[T.AdminUser, Depends(get_current_admin)],
 ) -> list[S.SubsidyOut]:
-    if (body.subsidy_type or "").lower() not in ("percentage", "fixed"):
-        raise HTTPException(
-            status_code=400, detail="subsidy_type must be 'percentage' or 'fixed'"
-        )
+    _check_subsidy(body.subsidy_type, body.value)
     st = await session.get(T.State, body.state_id)
     if not st:
         raise HTTPException(status_code=400, detail="Invalid state_id")
@@ -255,6 +264,49 @@ async def post_subsidy(
         is_active=body.is_active,
     )
     session.add(sub)
+    await session.commit()
+    return await _load_subsidy_list(session)
+
+
+def _check_subsidy(subsidy_type: str, value: float) -> str:
+    t = (subsidy_type or "").lower()
+    if t not in ("percentage", "fixed"):
+        raise HTTPException(
+            status_code=400, detail="subsidy_type must be 'percentage' or 'fixed'"
+        )
+    if t == "percentage" and value > 100:
+        raise HTTPException(status_code=400, detail="A percentage subsidy cannot exceed 100")
+    return t
+
+
+@router.put("/subsidy/{subsidy_id}", response_model=list[S.SubsidyOut])
+async def put_subsidy(
+    subsidy_id: int,
+    body: S.SubsidyUpdate,
+    session: Annotated[AsyncSession, Depends(get_db)],
+    _: Annotated[T.AdminUser, Depends(get_current_admin)],
+) -> list[S.SubsidyOut]:
+    row = await session.get(T.StateSubsidy, subsidy_id)
+    if not row:
+        raise HTTPException(status_code=404, detail="Subsidy not found")
+    row.subsidy_type = _check_subsidy(body.subsidy_type, body.value)
+    row.value = body.value
+    row.max_limit = body.max_limit
+    row.is_active = body.is_active
+    await session.commit()
+    return await _load_subsidy_list(session)
+
+
+@router.delete("/subsidy/{subsidy_id}", response_model=list[S.SubsidyOut])
+async def delete_subsidy(
+    subsidy_id: int,
+    session: Annotated[AsyncSession, Depends(get_db)],
+    _: Annotated[T.AdminUser, Depends(get_current_admin)],
+) -> list[S.SubsidyOut]:
+    row = await session.get(T.StateSubsidy, subsidy_id)
+    if not row:
+        raise HTTPException(status_code=404, detail="Subsidy not found")
+    await session.delete(row)
     await session.commit()
     return await _load_subsidy_list(session)
 
@@ -305,6 +357,38 @@ async def post_location_pricing(
     session.add(row)
     await session.commit()
     return await get_location_pricing(session, _)
+
+
+@router.put("/location-pricing/{row_id}", response_model=list[S.LocationPricingOut])
+async def put_location_pricing(
+    row_id: int,
+    body: S.LocationPricingUpdate,
+    session: Annotated[AsyncSession, Depends(get_db)],
+    admin: Annotated[T.AdminUser, Depends(get_current_admin)],
+) -> list[S.LocationPricingOut]:
+    row = await session.get(T.LocationPricing, row_id)
+    if not row:
+        raise HTTPException(status_code=404, detail="Location pricing not found")
+    row.system_cost_multiplier = body.system_cost_multiplier
+    if body.label is not None:  # keep the existing label unless a new one is sent
+        row.label = body.label
+    row.is_active = body.is_active
+    await session.commit()
+    return await get_location_pricing(session, admin)
+
+
+@router.delete("/location-pricing/{row_id}", response_model=list[S.LocationPricingOut])
+async def delete_location_pricing(
+    row_id: int,
+    session: Annotated[AsyncSession, Depends(get_db)],
+    admin: Annotated[T.AdminUser, Depends(get_current_admin)],
+) -> list[S.LocationPricingOut]:
+    row = await session.get(T.LocationPricing, row_id)
+    if not row:
+        raise HTTPException(status_code=404, detail="Location pricing not found")
+    await session.delete(row)
+    await session.commit()
+    return await get_location_pricing(session, admin)
 
 
 @router.get("/leads", response_model=list[S.LeadOut])

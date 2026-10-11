@@ -7,6 +7,7 @@ from pydantic import BaseModel, Field
 
 
 class ProjectImageOut(BaseModel):
+    id: int = 0
     url: str = Field(..., description="Public URL path under API origin, e.g. /uploads/…")
     alt: str = ""
     sort_order: int = 0

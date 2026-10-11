@@ -1,5 +1,6 @@
 import csv
 import io
+import re
 from datetime import datetime, timezone
 
 from fastapi.responses import StreamingResponse
@@ -7,6 +8,18 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import tables as T
+
+
+def _safe_cell(v: object) -> object:
+    """Neutralise spreadsheet formula injection from user-supplied text."""
+    if not isinstance(v, str):
+        return v
+    # Plain phone-number style text (e.g. "+91 98250 12345") is harmless; keep it clean.
+    if re.fullmatch(r"\+?[0-9][0-9 ()-]*", v):
+        return v
+    if v[:1] in ("=", "+", "-", "@", "\t", "\r"):
+        return "'" + v
+    return v
 
 
 async def streaming_leads_csv(session: AsyncSession) -> StreamingResponse:
@@ -36,10 +49,10 @@ async def streaming_leads_csv(session: AsyncSession) -> StreamingResponse:
         w.writerow(
             [
                 lead.id,
-                lead.name,
-                lead.phone,
-                lead.state,
-                lead.district,
+                _safe_cell(lead.name),
+                _safe_cell(lead.phone),
+                _safe_cell(lead.state),
+                _safe_cell(lead.district),
                 lead.system_size,
                 lead.system_size_kw,
                 lead.estimated_cost,

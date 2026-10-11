@@ -10,8 +10,16 @@ pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 settings = get_settings()
 
 
+_DUMMY_HASH = pwd_context.hash("not-a-real-password")
+
+
 def verify_password(plain: str, hashed: str) -> bool:
     return pwd_context.verify(plain, hashed)
+
+
+def burn_password_check(plain: str) -> None:
+    """Spend the same time as a real check so unknown usernames are not distinguishable."""
+    pwd_context.verify(plain, _DUMMY_HASH)
 
 
 def get_password_hash(password: str) -> str:
@@ -40,6 +48,8 @@ def decode_token(token: str) -> dict[str, Any]:
 def safe_decode_sub(token: str) -> Optional[str]:
     try:
         payload = decode_token(token)
+        if payload.get("typ") != "admin":
+            return None
         sub = payload.get("sub")
         if sub is not None:
             return str(sub)

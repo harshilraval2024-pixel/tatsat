@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import { toast } from "sonner";
 import {
   clearAdminToken,
   downloadWithAuth,
@@ -12,6 +13,8 @@ import {
 import { useAdminSession } from "@/lib/use-admin-session";
 import { CmsProjectsSection } from "@/components/admin/CmsProjectsSection";
 import { CmsServicesSection } from "@/components/admin/CmsServicesSection";
+import { useConfirm } from "@/components/admin/useConfirm";
+import { defaultContactContent, mergeContact, type ContactContent } from "@/lib/site-config";
 
 type Tab = "site" | "projects" | "services" | "pricing" | "subsidy" | "location" | "leads";
 
@@ -45,7 +48,92 @@ type SiteSettingsApi = {
   social_instagram: string;
   social_linkedin: string;
   social_youtube: string;
+  theme: "dark" | "light";
+  contact: ContactContent;
 };
+
+type SiteSectionId = "brand" | "address" | "hero" | "theme" | "contact" | "map" | "social";
+
+/** Each section is its own form and only writes these fields. */
+const SITE_SECTIONS: Record<SiteSectionId, { keys: (keyof SiteSettingsApi)[]; title: string; message: string; button: string }> = {
+  brand: {
+    keys: ["name", "tagline", "description", "url", "phone_display", "phone_tel", "whatsapp", "email", "hours"],
+    title: "Save company & contact details?",
+    message: "Name, phone, WhatsApp number, email and hours change across the whole website.",
+    button: "Save company & contact",
+  },
+  address: {
+    keys: ["address"],
+    title: "Save the studio address?",
+    message: "The address shown on the Contact page and in the footer will be updated.",
+    button: "Save address",
+  },
+  hero: {
+    keys: [
+      "hero_headline",
+      "hero_subtitle",
+      "hero_cta_primary_label",
+      "hero_cta_primary_href",
+      "hero_cta_secondary_label",
+      "hero_footer_line",
+    ],
+    title: "Publish homepage hero changes?",
+    message: "The headline, subtitle and buttons on the home page will be updated.",
+    button: "Save homepage hero",
+  },
+  theme: {
+    keys: ["theme"],
+    title: "Change the website theme?",
+    message: "Every page will switch to the selected theme for all visitors.",
+    button: "Save theme",
+  },
+  contact: {
+    keys: ["contact"],
+    title: "Save the contact page & WhatsApp card?",
+    message: "The Contact page text and WhatsApp topics will be updated for visitors.",
+    button: "Save contact page",
+  },
+  map: {
+    keys: ["map_embed_url", "service_areas"],
+    title: "Save map & coverage?",
+    message: "The map on the Contact page and the service-areas text will be updated.",
+    button: "Save map & coverage",
+  },
+  social: {
+    keys: ["social_facebook", "social_instagram", "social_linkedin", "social_youtube"],
+    title: "Save social media links?",
+    message: "The social links in the website footer will be updated.",
+    button: "Save social links",
+  },
+};
+
+function SectionSave({ busy, dirty, label }: { busy: boolean; dirty: boolean; label: string }) {
+  return (
+    <div className="flex flex-wrap items-center gap-3 border-t border-white/10 pt-5">
+      <button
+        type="submit"
+        disabled={busy || !dirty}
+        className="focus-ring inline-flex min-h-[44px] items-center justify-center gap-2 rounded-2xl bg-primary px-5 py-2.5 text-sm font-bold uppercase tracking-wide text-bg disabled:cursor-not-allowed disabled:opacity-50"
+      >
+        {busy ? (
+          <>
+            <span className="h-4 w-4 animate-spin rounded-full border-2 border-bg border-t-transparent" aria-hidden />
+            Saving…
+          </>
+        ) : (
+          label
+        )}
+      </button>
+      <span className={`text-xs ${dirty ? "text-primary" : "text-muted"}`}>
+        {dirty ? "Unsaved changes" : "All changes saved"}
+      </span>
+    </div>
+  );
+}
+
+function sectionCard(extra = "") {
+  return `space-y-6 rounded-3xl border border-white/10 bg-black/10 p-5 sm:p-6 ${extra}`;
+}
 
 function mapSiteSettingsFromApi(raw: Record<string, unknown>): SiteSettingsApi {
   const soc = (raw.social as Record<string, string> | undefined) ?? {};
@@ -83,6 +171,8 @@ function mapSiteSettingsFromApi(raw: Record<string, unknown>): SiteSettingsApi {
     social_instagram: String(soc.instagram ?? ""),
     social_linkedin: String(soc.linkedin ?? ""),
     social_youtube: String(soc.youtube ?? ""),
+    theme: raw.theme === "light" ? "light" : "dark",
+    contact: mergeContact(raw.contact as Partial<ContactContent> | undefined),
   };
 }
 
@@ -161,8 +251,12 @@ export function AdminDashboard() {
   const [leads, setLeads] = useState<Lead[]>([]);
   const [siteSettings, setSiteSettings] = useState<SiteSettingsApi | null>(null);
   const [siteSaving, setSiteSaving] = useState(false);
+  const [siteSaved, setSiteSaved] = useState<SiteSettingsApi | null>(null);
+  const [pricingSaved, setPricingSaved] = useState<Pricing | null>(null);
+  const [pricingSaving, setPricingSaving] = useState(false);
   const [profileOpen, setProfileOpen] = useState(false);
   const [logoutConfirm, setLogoutConfirm] = useState(false);
+  const { confirm: askConfirm, dialog: confirmDialog } = useConfirm();
 
   const [newSub, setNewSub] = useState({
     state_id: 1,
@@ -181,7 +275,10 @@ export function AdminDashboard() {
 
   const loadPricing = useCallback(() => {
     jfetch<Pricing>("/admin/pricing")
-      .then(setPricing)
+      .then((p) => {
+        setPricing(p);
+        setPricingSaved(p);
+      })
       .catch((e) => setErr(String(e)));
   }, []);
 
@@ -206,7 +303,9 @@ export function AdminDashboard() {
   const loadSiteSettings = useCallback(async () => {
     try {
       const raw = await jfetch<Record<string, unknown>>("/admin/site-settings");
-      setSiteSettings(mapSiteSettingsFromApi(raw));
+      const mapped = mapSiteSettingsFromApi(raw);
+      setSiteSettings(mapped);
+      setSiteSaved(mapped);
     } catch (e) {
       setErr(String(e));
     }
@@ -244,35 +343,91 @@ export function AdminDashboard() {
       notifyAdminAuthChanged();
       setTab("site");
     } catch (q) {
-      setErr(String(q));
+      setErr(q instanceof Error ? q.message : String(q));
     }
   }
 
-  async function savePricing(e: React.FormEvent) {
+  type PricingGroup = "components" | "installation" | "misc" | "estimation" | "roof";
+  const PRICING_GROUPS: Record<PricingGroup, { keys: (keyof Pricing)[]; title: string; message: string; button: string }> = {
+    components: {
+      keys: ["panel", "inverter", "battery"],
+      title: "Save component prices?",
+      message: "Panel, inverter and battery prices apply immediately to every estimate.",
+      button: "Save component prices",
+    },
+    installation: {
+      keys: ["installation"],
+      title: "Save installation pricing?",
+      message: "Installation charges apply immediately to every estimate.",
+      button: "Save installation pricing",
+    },
+    misc: {
+      keys: ["misc"],
+      title: "Save miscellaneous costs?",
+      message: "Miscellaneous charges apply immediately to every estimate.",
+      button: "Save miscellaneous costs",
+    },
+    estimation: {
+      keys: ["estimation"],
+      title: "Save estimation settings?",
+      message: "System-size rules and the default ₹/unit change every estimate.",
+      button: "Save estimation settings",
+    },
+    roof: {
+      keys: ["roof_types"],
+      title: "Save roof type pricing?",
+      message: "Roof multipliers and structure costs apply immediately to every estimate.",
+      button: "Save roof pricing",
+    },
+  };
+
+  function pricingGroupDirty(g: PricingGroup): boolean {
+    if (!pricing || !pricingSaved) return false;
+    return PRICING_GROUPS[g].keys.some(
+      (k) => JSON.stringify(pricing[k]) !== JSON.stringify(pricingSaved[k]),
+    );
+  }
+
+  async function savePricingGroup(e: React.FormEvent, g: PricingGroup) {
     e.preventDefault();
-    if (!pricing) return;
+    if (!pricing || pricingSaving) return;
+    const grp = PRICING_GROUPS[g];
+    if (!(await askConfirm({ title: grp.title, message: grp.message, confirmLabel: grp.button }))) return;
     setErr(null);
+    setPricingSaving(true);
     try {
+      // The API merges per-group, so only this group's values are sent.
+      const body: Record<string, unknown> = {};
+      for (const k of grp.keys) body[k] = pricing[k];
       const next = await jfetch<Pricing>("/admin/pricing", {
         method: "POST",
-        body: JSON.stringify({
-          panel: pricing.panel,
-          inverter: pricing.inverter,
-          battery: pricing.battery,
-          installation: pricing.installation,
-          misc: pricing.misc,
-          estimation: pricing.estimation,
-          roof_types: pricing.roof_types,
-        }),
+        body: JSON.stringify(body),
       });
-      setPricing(next);
+      setPricingSaved(next);
+      setPricing((cur) => {
+        if (!cur) return next;
+        const merged: Record<string, unknown> = { ...cur };
+        for (const k of grp.keys) merged[k] = next[k];
+        return merged as Pricing;
+      });
+      toast.success("Saved.");
     } catch (q) {
       setErr(String(q));
+    } finally {
+      setPricingSaving(false);
     }
   }
 
   async function addSubsidy(e: React.FormEvent) {
     e.preventDefault();
+    if (
+      !(await askConfirm({
+        title: "Add this subsidy?",
+        message: "It will change the subsidy applied to customer estimates for that state.",
+        confirmLabel: "Add subsidy",
+      }))
+    )
+      return;
     setErr(null);
     try {
       const rows = await jfetch<SubRow[]>("/admin/subsidy", {
@@ -285,12 +440,119 @@ export function AdminDashboard() {
     }
   }
 
+  const [editSub, setEditSub] = useState<SubRow | null>(null);
+  const [editLoc, setEditLoc] = useState<LocRow | null>(null);
+
+  async function saveSubsidyEdit() {
+    if (!editSub) return;
+    if (
+      !(await askConfirm({
+        title: "Save this subsidy?",
+        message: `${editSub.state_name}: the new rule applies to customer estimates immediately.`,
+        confirmLabel: "Save subsidy",
+      }))
+    )
+      return;
+    setErr(null);
+    try {
+      const rows = await jfetch<SubRow[]>(`/admin/subsidy/${editSub.id}`, {
+        method: "PUT",
+        body: JSON.stringify({
+          subsidy_type: editSub.subsidy_type,
+          value: editSub.value,
+          max_limit: editSub.max_limit,
+          is_active: editSub.is_active,
+        }),
+      });
+      setSubsidies(rows);
+      setEditSub(null);
+      toast.success("Subsidy updated.");
+    } catch (q) {
+      setErr(q instanceof Error ? q.message : String(q));
+    }
+  }
+
+  async function deleteSubsidy(s: SubRow) {
+    if (
+      !(await askConfirm({
+        title: "Delete this subsidy?",
+        message: `${s.state_name} (${s.subsidy_type} ${s.value}) will be removed permanently. This cannot be undone.`,
+        confirmLabel: "Delete subsidy",
+        danger: true,
+      }))
+    )
+      return;
+    setErr(null);
+    try {
+      setSubsidies(await jfetch<SubRow[]>(`/admin/subsidy/${s.id}`, { method: "DELETE" }));
+      if (editSub?.id === s.id) setEditSub(null);
+      toast.success("Subsidy deleted.");
+    } catch (q) {
+      setErr(q instanceof Error ? q.message : String(q));
+    }
+  }
+
+  async function saveLocationEdit() {
+    if (!editLoc) return;
+    if (
+      !(await askConfirm({
+        title: "Save this multiplier?",
+        message: `${editLoc.district_name || editLoc.state_name || "Location"}: the new multiplier applies to estimates immediately.`,
+        confirmLabel: "Save multiplier",
+      }))
+    )
+      return;
+    setErr(null);
+    try {
+      const rows = await jfetch<LocRow[]>(`/admin/location-pricing/${editLoc.id}`, {
+        method: "PUT",
+        body: JSON.stringify({
+          system_cost_multiplier: editLoc.system_cost_multiplier,
+          is_active: editLoc.is_active,
+        }),
+      });
+      setLoc(rows);
+      setEditLoc(null);
+      toast.success("Multiplier updated.");
+    } catch (q) {
+      setErr(q instanceof Error ? q.message : String(q));
+    }
+  }
+
+  async function deleteLocation(x: LocRow) {
+    if (
+      !(await askConfirm({
+        title: "Delete this multiplier?",
+        message: `${x.district_name || x.state_name || "Location"} (\u00d7${x.system_cost_multiplier}) will be removed permanently. This cannot be undone.`,
+        confirmLabel: "Delete multiplier",
+        danger: true,
+      }))
+    )
+      return;
+    setErr(null);
+    try {
+      setLoc(await jfetch<LocRow[]>(`/admin/location-pricing/${x.id}`, { method: "DELETE" }));
+      if (editLoc?.id === x.id) setEditLoc(null);
+      toast.success("Multiplier deleted.");
+    } catch (q) {
+      setErr(q instanceof Error ? q.message : String(q));
+    }
+  }
+
   async function addLocation(e: React.FormEvent) {
     e.preventDefault();
     if (!newLoc.state_id) {
       setErr("Pick a state");
       return;
     }
+    if (
+      !(await askConfirm({
+        title: "Add this location pricing?",
+        message: "It will change the system cost multiplier used in estimates for that location.",
+        confirmLabel: "Add location pricing",
+      }))
+    )
+      return;
     setErr(null);
     try {
       const rows = await jfetch<LocRow[]>("/admin/location-pricing", {
@@ -306,18 +568,39 @@ export function AdminDashboard() {
     }
   }
 
-  async function saveSite(e: React.FormEvent) {
+  function siteSectionDirty(id: SiteSectionId): boolean {
+    if (!siteSettings || !siteSaved) return false;
+    return SITE_SECTIONS[id].keys.some(
+      (k) => JSON.stringify(siteSettings[k]) !== JSON.stringify(siteSaved[k]),
+    );
+  }
+
+  async function saveSiteSection(e: React.FormEvent, id: SiteSectionId) {
     e.preventDefault();
-    if (!siteSettings || siteSaving) return;
+    if (!siteSettings || !siteSaved || siteSaving) return;
+    const sec = SITE_SECTIONS[id];
+    if (!(await askConfirm({ title: sec.title, message: sec.message, confirmLabel: sec.button }))) return;
     setErr(null);
     setSiteSaving(true);
     try {
-      await jfetch<Record<string, unknown>>("/admin/site-settings", {
+      // The API replaces the whole record, so send the last-saved values for every
+      // other section and only this section's edits — other drafts are never published.
+      const payload: Record<string, unknown> = { ...siteSaved };
+      for (const k of sec.keys) payload[k] = siteSettings[k];
+      const resp = await jfetch<Record<string, unknown>>("/admin/site-settings", {
         method: "PUT",
-        body: JSON.stringify(siteSettings),
+        body: JSON.stringify(payload),
+      });
+      const mapped = mapSiteSettingsFromApi(resp);
+      setSiteSaved(mapped);
+      setSiteSettings((cur) => {
+        if (!cur) return mapped;
+        const next: Record<string, unknown> = { ...cur };
+        for (const k of sec.keys) next[k] = mapped[k];
+        return next as SiteSettingsApi;
       });
       notifySiteConfigUpdated();
-      await loadSiteSettings();
+      toast.success("Saved.");
     } catch (q) {
       setErr(String(q));
     } finally {
@@ -437,6 +720,8 @@ export function AdminDashboard() {
         </div>
       </div>
 
+      {confirmDialog}
+
       {logoutConfirm ? (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 px-4">
           <div className="w-full max-w-sm rounded-3xl border border-white/15 bg-bg-elevated p-6 shadow-2xl">
@@ -473,7 +758,12 @@ export function AdminDashboard() {
           <p className="text-sm text-muted">Loading site settings…</p>
         ) : null}
         {tab === "site" && siteSettings && (
-          <form onSubmit={saveSite} className="space-y-6" aria-busy={siteSaving}>
+          <div className="space-y-6">
+          <form
+            onSubmit={(e) => saveSiteSection(e, "brand")}
+            className={sectionCard()}
+            aria-busy={siteSaving}
+          >
             <div>
               <h2 className="font-display text-lg font-bold text-white">Public website & contact</h2>
               <p className="mt-2 text-sm text-muted">
@@ -567,6 +857,14 @@ export function AdminDashboard() {
                 />
               </div>
             </div>
+            <SectionSave busy={siteSaving} dirty={siteSectionDirty("brand")} label={SITE_SECTIONS.brand.button} />
+          </form>
+
+          <form
+            onSubmit={(e) => saveSiteSection(e, "address")}
+            className={sectionCard()}
+            aria-busy={siteSaving}
+          >
             <div>
               <h3 className="font-display text-base font-bold text-white">Studio address</h3>
               <div className="mt-4 grid gap-4 sm:grid-cols-2">
@@ -656,8 +954,15 @@ export function AdminDashboard() {
                 </div>
               </div>
             </div>
+            <SectionSave busy={siteSaving} dirty={siteSectionDirty("address")} label={SITE_SECTIONS.address.button} />
+          </form>
 
-            <div className="border-t border-white/10 pt-8">
+          <form
+            onSubmit={(e) => saveSiteSection(e, "hero")}
+            className={sectionCard()}
+            aria-busy={siteSaving}
+          >
+            <div className="">
               <h3 className="font-display text-base font-bold text-white">Homepage hero</h3>
               <p className="mt-2 text-sm text-muted">
                 Leave headline empty to use the default animated title with company name.
@@ -723,8 +1028,234 @@ export function AdminDashboard() {
                 </div>
               </div>
             </div>
+            <SectionSave busy={siteSaving} dirty={siteSectionDirty("hero")} label={SITE_SECTIONS.hero.button} />
+          </form>
 
-            <div className="border-t border-white/10 pt-8">
+          <form
+            onSubmit={(e) => saveSiteSection(e, "theme")}
+            className={sectionCard()}
+            aria-busy={siteSaving}
+          >
+            <div className="">
+              <h3 className="font-display text-base font-bold text-white">Website theme</h3>
+              <p className="mt-1 text-sm text-muted">
+                Choose how the public website looks to visitors. Applies to every page after you save.
+              </p>
+              <div className="mt-4 grid gap-4 sm:grid-cols-2" role="radiogroup" aria-label="Website theme">
+                {(
+                  [
+                    {
+                      id: "light",
+                      name: "Solar Light",
+                      desc: "Bright, warm and clean with animated ring graphics.",
+                      swatch: "linear-gradient(135deg,#fffdf8 0%,#ffe9a8 55%,#ff9a2e 100%)",
+                    },
+                    {
+                      id: "dark",
+                      name: "Dark Power",
+                      desc: "The original dark look with glowing orange accents.",
+                      swatch: "linear-gradient(135deg,#030304 0%,#3a1c00 55%,#ff6a00 100%)",
+                    },
+                  ] as const
+                ).map((t) => {
+                  const on = siteSettings.theme === t.id;
+                  return (
+                    <button
+                      key={t.id}
+                      type="button"
+                      role="radio"
+                      aria-checked={on}
+                      onClick={() => setSiteSettings({ ...siteSettings, theme: t.id })}
+                      className={`flex items-center gap-4 rounded-2xl border p-4 text-left transition ${
+                        on ? "border-primary bg-primary/10 shadow-[0_0_0_1px_var(--primary)]" : "border-white/15 hover:border-primary/50"
+                      }`}
+                    >
+                      <span
+                        className="h-14 w-14 shrink-0 rounded-xl border border-white/20"
+                        style={{ background: t.swatch }}
+                        aria-hidden
+                      />
+                      <span>
+                        <span className="block font-display text-sm font-bold text-white">
+                          {t.name}
+                          {on ? <span className="ml-2 text-xs font-semibold text-primary">Selected</span> : null}
+                        </span>
+                        <span className="mt-0.5 block text-xs text-muted">{t.desc}</span>
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+            <SectionSave busy={siteSaving} dirty={siteSectionDirty("theme")} label={SITE_SECTIONS.theme.button} />
+          </form>
+
+          <form
+            onSubmit={(e) => saveSiteSection(e, "contact")}
+            className={sectionCard()}
+            aria-busy={siteSaving}
+          >
+            <div className="">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div>
+                  <h3 className="font-display text-base font-bold text-white">Contact page &amp; WhatsApp card</h3>
+                  <p className="mt-1 text-sm text-muted">
+                    Everything visitors read on the Contact page and in the WhatsApp card. The WhatsApp number, phone,
+                    email, hours and address come from the fields above.
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  className="rounded-full border border-white/20 px-4 py-2 text-xs font-semibold text-muted transition hover:text-white"
+                  onClick={() =>
+                    setSiteSettings({
+                      ...siteSettings,
+                      contact: { ...defaultContactContent, topics: [...defaultContactContent.topics] },
+                    })
+                  }
+                >
+                  Reset to defaults
+                </button>
+              </div>
+
+              <div className="mt-4 grid gap-5 sm:grid-cols-2">
+                {(
+                  [
+                    ["page_eyebrow", "Page small heading", 80],
+                    ["page_title", "Page title", 200],
+                    ["card_title", "Card title", 120],
+                    ["topics_label", "Topic list label", 80],
+                    ["name_label", "Name field label", 80],
+                    ["name_placeholder", "Name field placeholder", 80],
+                    ["note_label", "Note field label", 80],
+                    ["note_placeholder", "Note field placeholder", 120],
+                    ["button_label", "WhatsApp button text", 60],
+                    ["call_prompt", "Call prompt text (blank to hide)", 80],
+                    ["call_text", "Call link text — {phone} = number (blank to hide)", 80],
+                    ["email_text", "Email link text (blank to hide)", 80],
+                  ] as const
+                ).map(([key, text, max]) => (
+                  <div key={key}>
+                    <label className={label}>{text}</label>
+                    <input
+                      className={field}
+                      value={siteSettings.contact[key]}
+                      maxLength={max}
+                      onChange={(e) =>
+                        setSiteSettings({
+                          ...siteSettings,
+                          contact: { ...siteSettings.contact, [key]: e.target.value },
+                        })
+                      }
+                    />
+                  </div>
+                ))}
+                <div className="sm:col-span-2">
+                  <label className={label}>Page sub-heading</label>
+                  <input
+                    className={field}
+                    value={siteSettings.contact.page_subtitle}
+                    maxLength={400}
+                    onChange={(e) =>
+                      setSiteSettings({
+                        ...siteSettings,
+                        contact: { ...siteSettings.contact, page_subtitle: e.target.value },
+                      })
+                    }
+                  />
+                </div>
+                <div className="sm:col-span-2">
+                  <label className={label}>Card description</label>
+                  <textarea
+                    className={`${field} min-h-[72px]`}
+                    value={siteSettings.contact.card_subtitle}
+                    maxLength={300}
+                    onChange={(e) =>
+                      setSiteSettings({
+                        ...siteSettings,
+                        contact: { ...siteSettings.contact, card_subtitle: e.target.value },
+                      })
+                    }
+                  />
+                </div>
+
+                <div className="sm:col-span-2">
+                  <label className={label}>Topic buttons (up to 8)</label>
+                  <div className="mt-2 space-y-2">
+                    {siteSettings.contact.topics.map((t, i) => (
+                      <div key={i} className="flex gap-2">
+                        <input
+                          className="focus-ring w-full rounded-2xl border border-white/10 bg-black/40 px-4 py-2.5 text-sm text-white"
+                          value={t}
+                          maxLength={60}
+                          onChange={(e) => {
+                            const topics = [...siteSettings.contact.topics];
+                            topics[i] = e.target.value;
+                            setSiteSettings({ ...siteSettings, contact: { ...siteSettings.contact, topics } });
+                          }}
+                        />
+                        <button
+                          type="button"
+                          disabled={siteSettings.contact.topics.length <= 1}
+                          className="rounded-full border border-white/20 px-3 text-xs font-semibold text-muted transition hover:text-white disabled:opacity-40"
+                          onClick={() => {
+                            const topics = siteSettings.contact.topics.filter((_, j) => j !== i);
+                            setSiteSettings({ ...siteSettings, contact: { ...siteSettings.contact, topics } });
+                          }}
+                          aria-label={`Remove topic ${i + 1}`}
+                        >
+                          Remove
+                        </button>
+                      </div>
+                    ))}
+                    {siteSettings.contact.topics.length < 8 ? (
+                      <button
+                        type="button"
+                        className="rounded-full border border-primary/50 px-4 py-2 text-xs font-semibold text-primary transition hover:bg-primary/10"
+                        onClick={() =>
+                          setSiteSettings({
+                            ...siteSettings,
+                            contact: { ...siteSettings.contact, topics: [...siteSettings.contact.topics, ""] },
+                          })
+                        }
+                      >
+                        + Add topic
+                      </button>
+                    ) : null}
+                  </div>
+                </div>
+
+                <div className="sm:col-span-2">
+                  <label className={label}>
+                    WhatsApp message — use {"{business}"} {"{name}"} {"{topic}"} {"{note}"}
+                  </label>
+                  <textarea
+                    className={`${field} min-h-[110px] font-mono text-xs`}
+                    value={siteSettings.contact.message_template}
+                    maxLength={600}
+                    onChange={(e) =>
+                      setSiteSettings({
+                        ...siteSettings,
+                        contact: { ...siteSettings.contact, message_template: e.target.value },
+                      })
+                    }
+                  />
+                  <p className="mt-1 text-xs text-muted">
+                    A line is skipped automatically when its value is empty (for example, when the visitor leaves the name
+                    blank).
+                  </p>
+                </div>
+              </div>
+            </div>
+            <SectionSave busy={siteSaving} dirty={siteSectionDirty("contact")} label={SITE_SECTIONS.contact.button} />
+          </form>
+
+          <form
+            onSubmit={(e) => saveSiteSection(e, "map")}
+            className={sectionCard()}
+            aria-busy={siteSaving}
+          >
+            <div className="">
               <h3 className="font-display text-base font-bold text-white">Map & coverage</h3>
               <div className="mt-4 grid gap-5 sm:grid-cols-2">
                 <div className="sm:col-span-2">
@@ -746,8 +1277,15 @@ export function AdminDashboard() {
                 </div>
               </div>
             </div>
+            <SectionSave busy={siteSaving} dirty={siteSectionDirty("map")} label={SITE_SECTIONS.map.button} />
+          </form>
 
-            <div className="border-t border-white/10 pt-8">
+          <form
+            onSubmit={(e) => saveSiteSection(e, "social")}
+            className={sectionCard()}
+            aria-busy={siteSaving}
+          >
+            <div className="">
               <h3 className="font-display text-base font-bold text-white">Social media</h3>
               <div className="mt-4 grid gap-5 sm:grid-cols-2">
                 <div>
@@ -788,25 +1326,9 @@ export function AdminDashboard() {
                 </div>
               </div>
             </div>
-
-            <button
-              type="submit"
-              disabled={siteSaving}
-              className="focus-ring inline-flex min-h-[48px] min-w-[200px] items-center justify-center gap-2 rounded-2xl bg-primary px-6 py-3 text-sm font-bold uppercase tracking-wide text-bg disabled:cursor-not-allowed disabled:opacity-70"
-            >
-              {siteSaving ? (
-                <>
-                  <span
-                    className="h-4 w-4 animate-spin rounded-full border-2 border-bg border-t-transparent"
-                    aria-hidden
-                  />
-                  Saving…
-                </>
-              ) : (
-                "Save site & contact"
-              )}
-            </button>
+            <SectionSave busy={siteSaving} dirty={siteSectionDirty("social")} label={SITE_SECTIONS.social.button} />
           </form>
+          </div>
         )}
         {tab === "projects" && <CmsProjectsSection />}
         {tab === "services" && <CmsServicesSection />}
@@ -814,8 +1336,17 @@ export function AdminDashboard() {
           <p className="text-sm text-muted">Loading configuration…</p>
         ) : null}
         {tab === "pricing" && pricing && (
-          <form onSubmit={savePricing} className="space-y-8">
+          <div className="space-y-6">
             <h2 className="font-display text-lg font-bold text-white">Component & estimation settings</h2>
+          <form
+            onSubmit={(e) => savePricingGroup(e, "components")}
+            className={sectionCard()}
+            aria-busy={pricingSaving}
+          >
+            <div>
+              <h3 className="font-display text-base font-bold text-white">Component prices</h3>
+              <p className="mt-1 text-sm text-muted">Panel, inverter and battery unit prices.</p>
+            </div>
             <div className="grid gap-5 sm:grid-cols-2">
               <div>
                 <label className={label}>₹/W panel</label>
@@ -862,6 +1393,19 @@ export function AdminDashboard() {
                   }
                 />
               </div>
+            </div>
+            <SectionSave busy={pricingSaving} dirty={pricingGroupDirty("components")} label={PRICING_GROUPS.components.button} />
+          </form>
+          <form
+            onSubmit={(e) => savePricingGroup(e, "installation")}
+            className={sectionCard()}
+            aria-busy={pricingSaving}
+          >
+            <div>
+              <h3 className="font-display text-base font-bold text-white">Installation</h3>
+              <p className="mt-1 text-sm text-muted">Base installation charge and per-kW charge.</p>
+            </div>
+            <div className="grid gap-5 sm:grid-cols-2">
               <div>
                 <label className={label}>Install base (₹)</label>
                 <input
@@ -896,6 +1440,19 @@ export function AdminDashboard() {
                   }
                 />
               </div>
+            </div>
+            <SectionSave busy={pricingSaving} dirty={pricingGroupDirty("installation")} label={PRICING_GROUPS.installation.button} />
+          </form>
+          <form
+            onSubmit={(e) => savePricingGroup(e, "misc")}
+            className={sectionCard()}
+            aria-busy={pricingSaving}
+          >
+            <div>
+              <h3 className="font-display text-base font-bold text-white">Miscellaneous</h3>
+              <p className="mt-1 text-sm text-muted">Fixed extras and a percentage of the subtotal.</p>
+            </div>
+            <div className="grid gap-5 sm:grid-cols-2">
               <div>
                 <label className={label}>Misc fixed (₹)</label>
                 <input
@@ -931,6 +1488,19 @@ export function AdminDashboard() {
                   }
                 />
               </div>
+            </div>
+            <SectionSave busy={pricingSaving} dirty={pricingGroupDirty("misc")} label={PRICING_GROUPS.misc.button} />
+          </form>
+          <form
+            onSubmit={(e) => savePricingGroup(e, "estimation")}
+            className={sectionCard()}
+            aria-busy={pricingSaving}
+          >
+            <div>
+              <h3 className="font-display text-base font-bold text-white">Estimation rules</h3>
+              <p className="mt-1 text-sm text-muted">Default ₹/unit and the allowed system-size range.</p>
+            </div>
+            <div className="grid gap-5 sm:grid-cols-2">
               <div>
                 <label className={label}>Default ₹/unit (bill→kWh)</label>
                 <input
@@ -1004,6 +1574,13 @@ export function AdminDashboard() {
                 />
               </div>
             </div>
+            <SectionSave busy={pricingSaving} dirty={pricingGroupDirty("estimation")} label={PRICING_GROUPS.estimation.button} />
+          </form>
+          <form
+            onSubmit={(e) => savePricingGroup(e, "roof")}
+            className={sectionCard()}
+            aria-busy={pricingSaving}
+          >
             <div>
               <h3 className="font-display text-base font-bold text-white">Roof types</h3>
               <div className="mt-4 space-y-6">
@@ -1068,13 +1645,9 @@ export function AdminDashboard() {
                 ))}
               </div>
             </div>
-            <button
-              type="submit"
-              className="focus-ring rounded-2xl bg-primary px-6 py-3 text-sm font-bold uppercase tracking-wide text-bg"
-            >
-              Save
-            </button>
+            <SectionSave busy={pricingSaving} dirty={pricingGroupDirty("roof")} label={PRICING_GROUPS.roof.button} />
           </form>
+          </div>
         )}
 
         {tab === "subsidy" && (
@@ -1082,8 +1655,8 @@ export function AdminDashboard() {
             <div>
               <h2 className="font-display text-lg font-bold text-white">State subsidies</h2>
               <p className="mt-2 text-sm text-muted">
-                Applied after the full system + misc pre-subsidy total. Latest active row per state is used in the public
-                calculator.
+                Applied after the full system + misc pre-subsidy total. If a state has several active rows, the newest
+                one is used in the public calculator. Edit a row to change or switch it off, or delete it.
               </p>
             </div>
             <form onSubmit={addSubsidy} className="grid gap-4 rounded-2xl border border-white/10 bg-black/20 p-5 sm:grid-cols-2">
@@ -1153,18 +1726,110 @@ export function AdminDashboard() {
                     <th className={th}>Type</th>
                     <th className={th}>Value</th>
                     <th className={th}>Max</th>
+                    <th className={th}>Active</th>
+                    <th className={th}>Actions</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {subsidies.map((s) => (
-                    <tr key={s.id}>
-                      <td className={td}>{s.id}</td>
-                      <td className={td}>{s.state_name}</td>
-                      <td className={td}>{s.subsidy_type}</td>
-                      <td className={td}>{s.value}</td>
-                      <td className={td}>{s.max_limit}</td>
+                  {subsidies.length === 0 ? (
+                    <tr>
+                      <td className={td} colSpan={7}>
+                        No subsidies yet. Add one above.
+                      </td>
                     </tr>
-                  ))}
+                  ) : null}
+                  {subsidies.map((s) =>
+                    editSub?.id === s.id ? (
+                      <tr key={s.id} className="bg-primary/5">
+                        <td className={td}>{s.id}</td>
+                        <td className={td}>{s.state_name}</td>
+                        <td className={td}>
+                          <select
+                            aria-label="Subsidy type"
+                            className="focus-ring rounded-xl border border-white/10 bg-black/40 px-2 py-1.5 text-sm text-white"
+                            value={editSub.subsidy_type}
+                            onChange={(e) => setEditSub({ ...editSub, subsidy_type: e.target.value })}
+                          >
+                            <option value="fixed">fixed</option>
+                            <option value="percentage">percentage</option>
+                          </select>
+                        </td>
+                        <td className={td}>
+                          <input
+                            aria-label="Subsidy value"
+                            type="number"
+                            className="focus-ring w-24 rounded-xl border border-white/10 bg-black/40 px-2 py-1.5 text-sm text-white"
+                            value={editSub.value}
+                            onChange={(e) => setEditSub({ ...editSub, value: +e.target.value })}
+                          />
+                        </td>
+                        <td className={td}>
+                          <input
+                            aria-label="Subsidy max cap"
+                            type="number"
+                            className="focus-ring w-28 rounded-xl border border-white/10 bg-black/40 px-2 py-1.5 text-sm text-white"
+                            value={editSub.max_limit ?? ""}
+                            onChange={(e) =>
+                              setEditSub({ ...editSub, max_limit: e.target.value ? +e.target.value : null })
+                            }
+                          />
+                        </td>
+                        <td className={td}>
+                          <input
+                            aria-label="Subsidy active"
+                            type="checkbox"
+                            checked={editSub.is_active}
+                            onChange={(e) => setEditSub({ ...editSub, is_active: e.target.checked })}
+                          />
+                        </td>
+                        <td className={td}>
+                          <div className="flex gap-2">
+                            <button
+                              type="button"
+                              onClick={saveSubsidyEdit}
+                              className="rounded-full bg-primary px-3 py-1.5 text-xs font-bold text-bg"
+                            >
+                              Save
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setEditSub(null)}
+                              className="rounded-full border border-white/20 px-3 py-1.5 text-xs font-semibold text-muted hover:text-white"
+                            >
+                              Cancel
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    ) : (
+                      <tr key={s.id}>
+                        <td className={td}>{s.id}</td>
+                        <td className={td}>{s.state_name}</td>
+                        <td className={td}>{s.subsidy_type}</td>
+                        <td className={td}>{s.value}</td>
+                        <td className={td}>{s.max_limit}</td>
+                        <td className={td}>{s.is_active ? "Yes" : "No"}</td>
+                        <td className={td}>
+                          <div className="flex gap-2">
+                            <button
+                              type="button"
+                              onClick={() => setEditSub({ ...s })}
+                              className="rounded-full border border-primary/50 px-3 py-1.5 text-xs font-semibold text-primary hover:bg-primary/10"
+                            >
+                              Edit
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => deleteSubsidy(s)}
+                              className="rounded-full border border-accent/50 px-3 py-1.5 text-xs font-semibold text-accent hover:bg-accent/10"
+                            >
+                              Delete
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    ),
+                  )}
                 </tbody>
               </table>
             </div>
@@ -1228,17 +1893,89 @@ export function AdminDashboard() {
                     <th className={th}>State</th>
                     <th className={th}>District</th>
                     <th className={th}>×</th>
+                    <th className={th}>Active</th>
+                    <th className={th}>Actions</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {loc.map((x) => (
-                    <tr key={x.id}>
-                      <td className={td}>{x.id}</td>
-                      <td className={td}>{x.state_name}</td>
-                      <td className={td}>{x.district_name}</td>
-                      <td className={td}>{x.system_cost_multiplier}</td>
+                  {loc.length === 0 ? (
+                    <tr>
+                      <td className={td} colSpan={6}>
+                        No location multipliers yet (1.0 is used). Add one above.
+                      </td>
                     </tr>
-                  ))}
+                  ) : null}
+                  {loc.map((x) =>
+                    editLoc?.id === x.id ? (
+                      <tr key={x.id} className="bg-primary/5">
+                        <td className={td}>{x.id}</td>
+                        <td className={td}>{x.state_name}</td>
+                        <td className={td}>{x.district_name}</td>
+                        <td className={td}>
+                          <input
+                            aria-label="Multiplier"
+                            type="number"
+                            step="0.01"
+                            className="focus-ring w-24 rounded-xl border border-white/10 bg-black/40 px-2 py-1.5 text-sm text-white"
+                            value={editLoc.system_cost_multiplier}
+                            onChange={(e) => setEditLoc({ ...editLoc, system_cost_multiplier: +e.target.value })}
+                          />
+                        </td>
+                        <td className={td}>
+                          <input
+                            aria-label="Multiplier active"
+                            type="checkbox"
+                            checked={editLoc.is_active}
+                            onChange={(e) => setEditLoc({ ...editLoc, is_active: e.target.checked })}
+                          />
+                        </td>
+                        <td className={td}>
+                          <div className="flex gap-2">
+                            <button
+                              type="button"
+                              onClick={saveLocationEdit}
+                              className="rounded-full bg-primary px-3 py-1.5 text-xs font-bold text-bg"
+                            >
+                              Save
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setEditLoc(null)}
+                              className="rounded-full border border-white/20 px-3 py-1.5 text-xs font-semibold text-muted hover:text-white"
+                            >
+                              Cancel
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    ) : (
+                      <tr key={x.id}>
+                        <td className={td}>{x.id}</td>
+                        <td className={td}>{x.state_name}</td>
+                        <td className={td}>{x.district_name}</td>
+                        <td className={td}>{x.system_cost_multiplier}</td>
+                        <td className={td}>{x.is_active ? "Yes" : "No"}</td>
+                        <td className={td}>
+                          <div className="flex gap-2">
+                            <button
+                              type="button"
+                              onClick={() => setEditLoc({ ...x })}
+                              className="rounded-full border border-primary/50 px-3 py-1.5 text-xs font-semibold text-primary hover:bg-primary/10"
+                            >
+                              Edit
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => deleteLocation(x)}
+                              className="rounded-full border border-accent/50 px-3 py-1.5 text-xs font-semibold text-accent hover:bg-accent/10"
+                            >
+                              Delete
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    ),
+                  )}
                 </tbody>
               </table>
             </div>

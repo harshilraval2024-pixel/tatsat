@@ -33,7 +33,8 @@ from app.services.cms_content import (
 
 router = APIRouter(prefix="/admin", tags=["cms"])
 
-UPLOAD_DIR = Path(__file__).resolve().parent.parent / "static" / "uploads"
+# backend/static/uploads — must match the /uploads mount in app/main.py
+UPLOAD_DIR = Path(__file__).resolve().parent.parent.parent / "static" / "uploads"
 ALLOWED_EXT = {".jpg", ".jpeg", ".png", ".gif", ".webp"}
 MAX_UPLOAD = 12 * 1024 * 1024
 
@@ -42,6 +43,20 @@ class ImageAttachBody(BaseModel):
     path: str = Field(..., min_length=4, max_length=500)
     alt: str = Field("", max_length=300)
     sort_order: int = 0
+
+
+_MAGIC = {
+    ".jpg": (b"\xff\xd8\xff",),
+    ".jpeg": (b"\xff\xd8\xff",),
+    ".png": (b"\x89PNG\r\n\x1a\n",),
+    ".gif": (b"GIF87a", b"GIF89a"),
+}
+
+
+def _looks_like_image(data: bytes, ext: str) -> bool:
+    if ext == ".webp":
+        return data[:4] == b"RIFF" and data[8:12] == b"WEBP"
+    return any(data.startswith(m) for m in _MAGIC.get(ext, ()))
 
 
 def _ensure_upload_dir() -> None:
@@ -65,6 +80,8 @@ async def upload_media(
     body = await file.read()
     if len(body) > MAX_UPLOAD:
         raise HTTPException(status_code=413, detail="File too large (max 12 MB)")
+    if not _looks_like_image(body, ext):
+        raise HTTPException(status_code=400, detail="File content is not a valid image")
     safe = re.sub(r"[^a-zA-Z0-9._-]", "_", Path(raw_name).stem)[:80]
     name = f"{uuid.uuid4().hex}_{safe}{ext}"
     dest = UPLOAD_DIR / name
@@ -118,6 +135,8 @@ async def admin_update_project(
         raise HTTPException(status_code=404, detail="Project not found")
     data = body.model_dump(exclude_unset=True)
     for k, v in data.items():
+        if v is None and k != "completion_date":
+            continue  # never write NULL into a required column
         setattr(p, k, v)
     await session.commit()
     ro = await session.execute(
@@ -275,6 +294,8 @@ async def admin_update_service(
             raise HTTPException(status_code=400, detail="slug already in use")
         s.slug = new_slug
     for k, v in data.items():
+        if v is None and k != "price_label":
+            continue  # never write NULL into a required column
         setattr(s, k, v)
     await session.commit()
     await session.refresh(s)

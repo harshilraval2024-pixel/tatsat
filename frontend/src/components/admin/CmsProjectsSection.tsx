@@ -1,9 +1,11 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import Image from "next/image";
+import { toast } from "sonner";
 import { getApiBase } from "@/lib/nrgs-api";
 import { jfetch, uploadAdminFile } from "@/lib/nrgs-api";
+import { useConfirm } from "@/components/admin/useConfirm";
 
 type ProjectOut = {
   id: number;
@@ -13,7 +15,7 @@ type ProjectOut = {
   system_size_kw: number;
   completion_date: string | null;
   sort_order: number;
-  images: { url: string; alt: string; sort_order: number }[];
+  images: { id: number; url: string; alt: string; sort_order: number }[];
 };
 
 const label = "text-xs font-semibold uppercase tracking-wide text-muted";
@@ -39,71 +41,143 @@ export function CmsProjectsSection() {
   const [desc, setDesc] = useState("");
   const [file, setFile] = useState<File | null>(null);
   const [busy, setBusy] = useState(false);
+  /** The project being edited, or null when the form is in "add" mode. */
+  const [editing, setEditing] = useState<ProjectOut | null>(null);
+  const formRef = useRef<HTMLFormElement>(null);
+  const fileRef = useRef<HTMLInputElement>(null);
+  const { confirm: askConfirm, dialog: confirmDialog } = useConfirm();
 
   const load = useCallback(() => {
     jfetch<ProjectOut[]>("/admin/projects")
       .then(setRows)
-      .catch((e) => setMsg(String(e)));
+      .catch((e) => setMsg(e instanceof Error ? e.message : String(e)));
   }, []);
 
   useEffect(() => {
     load();
   }, [load]);
 
-  async function createProject(e: React.FormEvent) {
+  function resetForm() {
+    setEditing(null);
+    setTitle("");
+    setLocation("");
+    setKw("10");
+    setDesc("");
+    setFile(null);
+    if (fileRef.current) fileRef.current.value = "";
+  }
+
+  function startEdit(r: ProjectOut) {
+    setEditing(r);
+    setTitle(r.title);
+    setLocation(r.location);
+    setKw(String(r.system_size_kw));
+    setDesc(r.description);
+    setFile(null);
+    if (fileRef.current) fileRef.current.value = "";
+    setMsg(null);
+    requestAnimationFrame(() => formRef.current?.scrollIntoView({ behavior: "smooth", block: "center" }));
+  }
+
+  async function saveProject(e: React.FormEvent) {
     e.preventDefault();
+    const isEdit = editing !== null;
+    if (
+      !(await askConfirm(
+        isEdit
+          ? {
+              title: "Save changes to this project?",
+              message: `"${title.trim() || "Untitled"}" will be updated on the public Projects page.`,
+              confirmLabel: "Save changes",
+            }
+          : {
+              title: "Publish this project?",
+              message: `"${title.trim() || "Untitled"}" will appear on the public Projects page.`,
+              confirmLabel: "Publish project",
+            },
+      ))
+    )
+      return;
     setMsg(null);
     setBusy(true);
     try {
-      const p = await jfetch<ProjectOut>("/admin/projects", {
-        method: "POST",
-        body: JSON.stringify({
-          title,
-          description: desc,
-          location,
-          system_size_kw: parseFloat(kw) || 0,
-          sort_order: rows.length,
-        }),
-        auth: true,
-      });
-      if (file) {
-        const up = await uploadAdminFile(file);
-        await jfetch<ProjectOut>(`/admin/projects/${p.id}/images`, {
-          method: "POST",
-          body: JSON.stringify({ path: up.path, alt: title, sort_order: 0 }),
+      let projectId: number;
+      if (editing) {
+        const p = await jfetch<ProjectOut>(`/admin/projects/${editing.id}`, {
+          method: "PUT",
+          body: JSON.stringify({
+            title,
+            description: desc,
+            location,
+            system_size_kw: parseFloat(kw) || 0,
+          }),
         });
+        projectId = p.id;
+      } else {
+        const p = await jfetch<ProjectOut>("/admin/projects", {
+          method: "POST",
+          body: JSON.stringify({
+            title,
+            description: desc,
+            location,
+            system_size_kw: parseFloat(kw) || 0,
+            sort_order: rows.length,
+          }),
+        });
+        projectId = p.id;
       }
-      setTitle("");
-      setLocation("");
-      setKw("10");
-      setDesc("");
-      setFile(null);
+      if (file) {
+        // New image first; only then drop the old cover, so a failed upload loses nothing.
+        const up = await uploadAdminFile(file);
+        await jfetch<ProjectOut>(`/admin/projects/${projectId}/images`, {
+          method: "POST",
+          body: JSON.stringify({ path: up.path, alt: title, sort_order: -1 }),
+        });
+        for (const im of editing?.images ?? []) {
+          await jfetch(`/admin/projects/${projectId}/images/${im.id}`, { method: "DELETE" });
+        }
+      }
+      resetForm();
       load();
-      setMsg("Project saved.");
+      toast.success(isEdit ? "Project updated." : "Project saved.");
+      setMsg(isEdit ? "Project updated." : "Project saved.");
     } catch (err) {
-      setMsg(String(err));
+      setMsg(err instanceof Error ? err.message : String(err));
     } finally {
       setBusy(false);
     }
   }
 
   async function remove(id: number) {
-    if (!confirm("Delete this project and its images?")) return;
+    if (
+      !(await askConfirm({
+        title: "Delete this project?",
+        message: "The project and its images will be permanently removed. This cannot be undone.",
+        confirmLabel: "Delete project",
+        danger: true,
+      }))
+    )
+      return;
     setMsg(null);
     try {
       await jfetch(`/admin/projects/${id}`, { method: "DELETE" });
+      if (editing?.id === id) resetForm();
       load();
     } catch (e) {
-      setMsg(String(e));
+      setMsg(e instanceof Error ? e.message : String(e));
     }
   }
 
+  const editingCover = editing?.images[0]?.url;
+
   return (
     <div className="space-y-8">
+      {confirmDialog}
       <div>
         <h2 className="font-display text-lg font-bold text-white">Project showcase</h2>
         <p className="mt-2 text-sm text-muted">
-          Projects appear on the public /projects page. Upload a cover image after creating a row, or paste external URLs via API.
+          Projects appear on the public /projects page. Use Edit to change a project&apos;s details or replace its
+          cover image.
         </p>
       </div>
       {msg ? <p className="text-sm text-secondary">{msg}</p> : null}
@@ -116,14 +190,22 @@ export function CmsProjectsSection() {
               <th className="px-3 py-2">Title</th>
               <th className="px-3 py-2">Location</th>
               <th className="px-3 py-2">kW</th>
-              <th className="px-3 py-2" />
+              <th className="px-3 py-2 text-right">Actions</th>
             </tr>
           </thead>
           <tbody>
+            {rows.length === 0 ? (
+              <tr className="border-t border-white/10">
+                <td className="px-3 py-4 text-muted" colSpan={5}>
+                  No projects yet. Add one below.
+                </td>
+              </tr>
+            ) : null}
             {rows.map((r) => {
               const cover = r.images[0]?.url;
+              const active = editing?.id === r.id;
               return (
-                <tr key={r.id} className="border-t border-white/10">
+                <tr key={r.id} className={`border-t border-white/10 ${active ? "bg-primary/5" : ""}`}>
                   <td className="px-3 py-2">
                     <div className="relative h-12 w-16 overflow-hidden rounded-lg bg-black/40">
                       {cover ? (
@@ -135,13 +217,22 @@ export function CmsProjectsSection() {
                   <td className="px-3 py-2 text-muted">{r.location}</td>
                   <td className="px-3 py-2">{r.system_size_kw}</td>
                   <td className="px-3 py-2 text-right">
-                    <button
-                      type="button"
-                      className="text-xs font-semibold text-accent hover:underline"
-                      onClick={() => remove(r.id)}
-                    >
-                      Delete
-                    </button>
+                    <div className="flex justify-end gap-2">
+                      <button
+                        type="button"
+                        className="rounded-full border border-primary/50 px-3 py-1.5 text-xs font-semibold text-primary hover:bg-primary/10"
+                        onClick={() => startEdit(r)}
+                      >
+                        {active ? "Editing…" : "Edit"}
+                      </button>
+                      <button
+                        type="button"
+                        className="rounded-full border border-accent/50 px-3 py-1.5 text-xs font-semibold text-accent hover:bg-accent/10"
+                        onClick={() => remove(r.id)}
+                      >
+                        Delete
+                      </button>
+                    </div>
                   </td>
                 </tr>
               );
@@ -150,8 +241,21 @@ export function CmsProjectsSection() {
         </table>
       </div>
 
-      <form onSubmit={createProject} className="space-y-4 rounded-2xl border border-white/10 p-4">
-        <p className="text-sm font-semibold text-white">Add project</p>
+      <form ref={formRef} onSubmit={saveProject} className="space-y-4 rounded-2xl border border-white/10 p-4">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <p className="text-sm font-semibold text-white">
+            {editing ? `Edit project — ${editing.title}` : "Add project"}
+          </p>
+          {editing ? (
+            <button
+              type="button"
+              onClick={resetForm}
+              className="rounded-full border border-white/20 px-3 py-1.5 text-xs font-semibold text-muted hover:text-white"
+            >
+              Cancel edit
+            </button>
+          ) : null}
+        </div>
         <div className="grid gap-4 sm:grid-cols-2">
           <div>
             <label className={label}>Title</label>
@@ -170,8 +274,21 @@ export function CmsProjectsSection() {
             <textarea className={`${field} min-h-[80px]`} value={desc} onChange={(e) => setDesc(e.target.value)} />
           </div>
           <div className="sm:col-span-2">
-            <label className={label}>Cover image (optional)</label>
+            <label className={label}>{editing ? "Replace cover image (optional)" : "Cover image (optional)"}</label>
+            {editing ? (
+              <div className="mt-2 flex items-center gap-3">
+                <div className="relative h-12 w-16 overflow-hidden rounded-lg bg-black/40">
+                  {editingCover ? (
+                    <Image src={mediaSrc(editingCover)} alt="" fill className="object-cover" sizes="64px" unoptimized />
+                  ) : null}
+                </div>
+                <span className="text-xs text-muted">
+                  {editingCover ? "Current cover. Choose a file to replace it." : "No cover yet."}
+                </span>
+              </div>
+            ) : null}
             <input
+              ref={fileRef}
               type="file"
               accept="image/jpeg,image/png,image/webp,image/gif"
               className="mt-2 text-sm text-muted"
@@ -184,7 +301,7 @@ export function CmsProjectsSection() {
           disabled={busy}
           className="rounded-2xl bg-primary px-6 py-2 text-sm font-bold uppercase tracking-wide text-bg disabled:opacity-50"
         >
-          {busy ? "Saving…" : "Create project"}
+          {busy ? "Saving…" : editing ? "Save changes" : "Create project"}
         </button>
       </form>
     </div>

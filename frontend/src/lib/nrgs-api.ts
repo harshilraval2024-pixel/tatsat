@@ -67,7 +67,9 @@ export async function jfetch<T>(
     ...rest,
     headers: { ...h, ...rest.headers },
   });
-  if (res.status === 401) {
+  // A 401 on an authenticated call means the session ended; on the login call itself
+  // (auth: false) it is simply "wrong credentials", reported below with the server's message.
+  if (res.status === 401 && auth) {
     clearAdminToken();
     notifyAdminAuthChanged();
     throw new Error("Session expired. Log in again.");

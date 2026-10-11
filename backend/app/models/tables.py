@@ -231,6 +231,8 @@ class SiteSettings(Base):
     social_instagram: Mapped[str] = mapped_column(String(500), nullable=False, default="")
     social_linkedin: Mapped[str] = mapped_column(String(500), nullable=False, default="")
     social_youtube: Mapped[str] = mapped_column(String(500), nullable=False, default="")
+    theme: Mapped[str] = mapped_column(String(20), nullable=False, default="dark", server_default="dark")
+    contact_json: Mapped[str] = mapped_column(Text, nullable=False, default="{}", server_default="{}")
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
     )

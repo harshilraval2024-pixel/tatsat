@@ -1,4 +1,6 @@
-from pydantic import BaseModel, Field
+from typing import Literal
+
+from pydantic import BaseModel, Field, field_validator
 
 
 class SiteAddressOut(BaseModel):
@@ -15,6 +17,51 @@ class SocialLinksOut(BaseModel):
     instagram: str = ""
     linkedin: str = ""
     youtube: str = ""
+
+
+class ContactContent(BaseModel):
+    """Editable copy for the Contact page and its WhatsApp card."""
+
+    page_eyebrow: str = Field("Visit / call", max_length=80)
+    page_title: str = Field("We\u2019re easy to reach from Gift City to Surat", max_length=200)
+    page_subtitle: str = Field(
+        "Walk-ins by appointment \u2014 bring recent bills and roof photos if you can.",
+        max_length=400,
+    )
+    card_title: str = Field("Chat with us on WhatsApp", max_length=120)
+    card_subtitle: str = Field(
+        "The fastest way to reach us \u2014 pick a topic and we\u2019ll reply on WhatsApp.",
+        max_length=300,
+    )
+    topics_label: str = Field("What do you need?", max_length=80)
+    topics: list[str] = Field(
+        default_factory=lambda: [
+            "Free solar quote",
+            "Subsidy information",
+            "Rooftop site visit",
+            "Talk to an engineer",
+        ],
+        max_length=8,
+    )
+    name_label: str = Field("Your name (optional)", max_length=80)
+    name_placeholder: str = Field("e.g. Ravi Patel", max_length=80)
+    note_label: str = Field("Short note (optional)", max_length=80)
+    note_placeholder: str = Field("City, roof type, monthly bill\u2026", max_length=120)
+    button_label: str = Field("Start WhatsApp chat", max_length=60)
+    message_template: str = Field(
+        "Hi {business},\nI\u2019m {name}.\nI\u2019d like help with: {topic}.\n{note}",
+        max_length=600,
+        description="Placeholders: {business} {name} {topic} {note}. Lines with an empty value are dropped.",
+    )
+    call_prompt: str = Field("Prefer a call?", max_length=80)
+    call_text: str = Field("Call {phone}", max_length=80)
+    email_text: str = Field("Email us", max_length=80)
+
+    @field_validator("topics")
+    @classmethod
+    def _clean_topics(cls, v: list[str]) -> list[str]:
+        out = [t.strip()[:60] for t in v if t and t.strip()]
+        return out or ["Free solar quote"]
 
 
 class SiteSettingsOut(BaseModel):
@@ -39,6 +86,8 @@ class SiteSettingsOut(BaseModel):
     map_embed_url: str = ""
     service_areas: str = ""
     social: SocialLinksOut = Field(default_factory=SocialLinksOut)
+    theme: Literal["dark", "light"] = "dark"
+    contact: ContactContent = Field(default_factory=ContactContent)
 
 
 class SiteSettingsUpdate(BaseModel):
@@ -66,3 +115,5 @@ class SiteSettingsUpdate(BaseModel):
     social_instagram: str = Field("", max_length=500)
     social_linkedin: str = Field("", max_length=500)
     social_youtube: str = Field("", max_length=500)
+    theme: Literal["dark", "light"] = "dark"
+    contact: ContactContent = Field(default_factory=ContactContent)

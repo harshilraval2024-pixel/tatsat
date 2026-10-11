@@ -1,3 +1,4 @@
+import re
 from typing import Any, Optional
 
 from pydantic import BaseModel, Field, field_validator, model_validator
@@ -29,13 +30,15 @@ class EstimateResponse(BaseModel):
 class EstimateRequest(BaseModel):
     """Public estimate — matches a typical solar form."""
 
-    name: Optional[str] = None
-    phone: Optional[str] = None
-    state: str = Field(..., description="State name, e.g. Gujarat")
-    district: Optional[str] = None
-    monthly_bill: Optional[float] = Field(None, ge=0, description="INR; used if units not given")
+    name: Optional[str] = Field(None, max_length=120)
+    phone: Optional[str] = Field(None, max_length=20)
+    state: str = Field(..., min_length=1, max_length=100, description="State name, e.g. Gujarat")
+    district: Optional[str] = Field(None, max_length=100)
+    monthly_bill: Optional[float] = Field(
+        None, ge=0, le=10000000, description="INR; used if units not given"
+    )
     monthly_units: Optional[float] = Field(
-        None, ge=0, description="kWh per month; takes precedence if both set"
+        None, ge=0, le=1000000, description="kWh per month; takes precedence if both set"
     )
     rupees_per_unit: Optional[float] = Field(
         None, ge=1, le=20, description="Override default ₹/unit for bill→units (band ~₹6–8)"
@@ -44,6 +47,16 @@ class EstimateRequest(BaseModel):
     battery_kwh: float = Field(5, ge=0, le=100)
     roof_type: str = Field("RCC", description="RCC | METAL | GROUND")
     save_lead: bool = True
+
+    @field_validator("phone")
+    @classmethod
+    def validate_phone(cls, v: Optional[str]) -> Optional[str]:
+        if v is None or not v.strip():
+            return None
+        v = v.strip()
+        if not re.fullmatch(r"\+?[0-9][0-9 ()-]{5,18}", v):
+            raise ValueError("phone must contain only digits, spaces, +, - and ()")
+        return v
 
     @field_validator("roof_type")
     @classmethod

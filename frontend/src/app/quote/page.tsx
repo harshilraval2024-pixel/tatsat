@@ -20,7 +20,7 @@ export default async function QuotePage() {
         align="center"
         eyebrow="Lead desk"
         title="Free quote — response within 24 hours"
-        subtitle="We prioritise WhatsApp for speed, but our engineers will always call to validate technical assumptions."
+        subtitle="Share a few details and WhatsApp opens with your request ready to send. Our engineers reply fast and will call to validate technical assumptions."
       />
       <Reveal>
         <QuoteForm />

@@ -1,12 +1,23 @@
+import json
+
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import tables as T
 from app.schemas.site_settings import (
+    ContactContent,
     SiteAddressOut,
     SiteSettingsOut,
     SiteSettingsUpdate,
     SocialLinksOut,
 )
+
+
+def _contact_from_row(row: T.SiteSettings) -> ContactContent:
+    try:
+        data = json.loads(getattr(row, "contact_json", "") or "{}")
+        return ContactContent(**data) if isinstance(data, dict) else ContactContent()
+    except (ValueError, TypeError):
+        return ContactContent()
 
 
 def site_settings_to_out(row: T.SiteSettings) -> SiteSettingsOut:
@@ -42,6 +53,8 @@ def site_settings_to_out(row: T.SiteSettings) -> SiteSettingsOut:
             linkedin=getattr(row, "social_linkedin", "") or "",
             youtube=getattr(row, "social_youtube", "") or "",
         ),
+        theme="light" if getattr(row, "theme", "dark") == "light" else "dark",
+        contact=_contact_from_row(row),
     )
 
 
@@ -77,3 +90,5 @@ def apply_site_settings_update(row: T.SiteSettings, body: SiteSettingsUpdate) ->
     row.social_instagram = body.social_instagram
     row.social_linkedin = body.social_linkedin
     row.social_youtube = body.social_youtube
+    row.theme = body.theme
+    row.contact_json = body.contact.model_dump_json()

@@ -42,9 +42,19 @@ export function GlowButton(props: GlowButtonProps) {
     );
   }
 
-  const { type = "button", ...buttonRest } = props as GlowButtonAsButton;
+  // Strip our own props so they are not spread onto the DOM node (className would override `cls`).
+  const {
+    type = "button",
+    variant: _variant,
+    className: _className,
+    children: _children,
+    ...buttonRest
+  } = props as GlowButtonAsButton;
+  void _variant;
+  void _className;
+  void _children;
   return (
-    <button type={type} className={cls} {...buttonRest}>
+    <button type={type} {...buttonRest} className={cls}>
       {children}
     </button>
   );
