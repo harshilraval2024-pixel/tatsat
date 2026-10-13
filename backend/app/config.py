@@ -110,6 +110,14 @@ class Settings(BaseSettings):
 
         return self
 
+    @model_validator(mode="after")
+    def _explicit_sync_driver(self) -> "Settings":
+        # SQLAlchemy 2.1 changed the default driver for "postgresql://" from psycopg2 to
+        # psycopg (v3), which is not installed. Name the driver we ship explicitly.
+        if self.database_url_sync.startswith("postgresql://"):
+            self.database_url_sync = "postgresql+psycopg2://" + self.database_url_sync[len("postgresql://"):]
+        return self
+
 
 @lru_cache
 def get_settings() -> Settings:
