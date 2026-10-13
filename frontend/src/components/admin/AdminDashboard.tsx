@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import {
   clearAdminToken,
@@ -243,6 +243,9 @@ export function AdminDashboard() {
   const [err, setErr] = useState<string | null>(null);
   const [u, setU] = useState("");
   const [p, setP] = useState("");
+  const [loggingIn, setLoggingIn] = useState(false);
+  const [slowLogin, setSlowLogin] = useState(false);
+  const loginInFlight = useRef(false);
 
   const [states, setStates] = useState<State[]>([]);
   const [pricing, setPricing] = useState<Pricing | null>(null);
@@ -332,18 +335,45 @@ export function AdminDashboard() {
 
   async function login(e: React.FormEvent) {
     e.preventDefault();
+    if (loginInFlight.current) return; // ignore double clicks / repeated Enter
+    const username = u.trim();
+    if (!username || !p) {
+      setErr("Enter your username and password.");
+      return;
+    }
+    loginInFlight.current = true;
+    setLoggingIn(true);
+    setSlowLogin(false);
     setErr(null);
+    // The free hosting tier sleeps when idle; the first request can take a minute.
+    const slowTimer = setTimeout(() => setSlowLogin(true), 4000);
+    const ctrl = new AbortController();
+    const abortTimer = setTimeout(() => ctrl.abort(), 90_000);
     try {
       const r = await jfetch<{ access_token: string }>("/admin/login", {
         method: "POST",
-        body: JSON.stringify({ username: u, password: p }),
+        body: JSON.stringify({ username, password: p }),
         auth: false,
+        signal: ctrl.signal,
       });
       setAdminToken(r.access_token);
       notifyAdminAuthChanged();
       setTab("site");
+      setP("");
     } catch (q) {
-      setErr(q instanceof Error ? q.message : String(q));
+      if (q instanceof DOMException && q.name === "AbortError") {
+        setErr("The server took too long to respond. Please wait a minute and try again.");
+      } else if (q instanceof TypeError) {
+        setErr("Cannot reach the server. Check your internet connection and try again.");
+      } else {
+        setErr(q instanceof Error ? q.message : String(q));
+      }
+    } finally {
+      clearTimeout(slowTimer);
+      clearTimeout(abortTimer);
+      loginInFlight.current = false;
+      setLoggingIn(false);
+      setSlowLogin(false);
     }
   }
 
@@ -634,13 +664,25 @@ export function AdminDashboard() {
       <div className="glass-panel mx-auto max-w-md rounded-3xl p-8">
         <h1 className="font-display text-2xl font-bold text-white">Staff dashboard</h1>
         <p className="mt-2 text-sm text-muted">Sign in to manage public site details, pricing, subsidies, and leads.</p>
-        {err ? <p className="mt-4 text-sm text-accent">{err}</p> : null}
-        <form onSubmit={login} className="mt-6 space-y-4">
+        {err ? (
+          <p role="alert" className="mt-4 text-sm text-accent">
+            {err}
+          </p>
+        ) : null}
+        <form onSubmit={login} className="mt-6 space-y-4" aria-busy={loggingIn} noValidate>
           <div>
             <label className={label} htmlFor="adm-user">
               Username
             </label>
-            <input id="adm-user" className={field} value={u} onChange={(e) => setU(e.target.value)} required autoComplete="username" />
+            <input
+              id="adm-user"
+              className={`${field} disabled:cursor-not-allowed disabled:opacity-60`}
+              value={u}
+              onChange={(e) => setU(e.target.value)}
+              required
+              autoComplete="username"
+              disabled={loggingIn}
+            />
           </div>
           <div>
             <label className={label} htmlFor="adm-pass">
@@ -649,19 +691,37 @@ export function AdminDashboard() {
             <input
               id="adm-pass"
               type="password"
-              className={field}
+              className={`${field} disabled:cursor-not-allowed disabled:opacity-60`}
               value={p}
               onChange={(e) => setP(e.target.value)}
               required
               autoComplete="current-password"
+              disabled={loggingIn}
             />
           </div>
           <button
             type="submit"
-            className="focus-ring w-full rounded-2xl bg-primary px-6 py-3 text-sm font-bold uppercase tracking-wide text-bg"
+            disabled={loggingIn}
+            className="focus-ring inline-flex w-full items-center justify-center gap-2 rounded-2xl bg-primary px-6 py-3 text-sm font-bold uppercase tracking-wide text-bg disabled:cursor-not-allowed disabled:opacity-70"
           >
-            Log in
+            {loggingIn ? (
+              <>
+                <span
+                  className="h-4 w-4 animate-spin rounded-full border-2 border-bg border-t-transparent"
+                  aria-hidden
+                />
+                Signing in…
+              </>
+            ) : (
+              "Log in"
+            )}
           </button>
+          {slowLogin ? (
+            <p role="status" className="text-center text-xs text-muted">
+              Waking up the server — the first sign-in after a quiet period can take up to a minute. Please keep this
+              page open.
+            </p>
+          ) : null}
         </form>
       </div>
     );
