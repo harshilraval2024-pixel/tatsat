@@ -10,7 +10,9 @@
 #>
 param(
     [string]$DatabaseUrl,
-    [string]$AdminPassword
+    [string]$AdminPassword,
+    # Read the connection string from the clipboard (copy it in Neon first). Most reliable.
+    [switch]$FromClipboard
 )
 
 $ErrorActionPreference = "Stop"
@@ -24,11 +26,27 @@ function Read-Secret([string]$prompt) {
     finally { [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($b) }
 }
 
-if (-not $DatabaseUrl) { $DatabaseUrl = Read-Secret "Paste the connection string (postgresql://...)" }
-$DatabaseUrl = $DatabaseUrl.Trim().Trim('"').Trim("'")
-if ($DatabaseUrl -notmatch '^postgres(ql)?://') {
-    throw "That does not look like a Postgres connection string (it should start with postgresql://)."
+function Find-PostgresUrl([string]$text) {
+    # Accepts a bare URL, a quoted URL, or a whole  psql 'postgresql://...'  command.
+    if ($text -match "postgres(?:ql)?://[^\s'`"]+") { return $Matches[0] }
+    return $null
 }
+
+$raw = $DatabaseUrl
+if ($FromClipboard) { $raw = (Get-Clipboard -Raw) }
+if (-not $raw) { $raw = Read-Secret "Paste the connection string (postgresql://...)" }
+$DatabaseUrl = Find-PostgresUrl $raw
+if (-not $DatabaseUrl) {
+    $n = if ($raw) { $raw.Trim().Length } else { 0 }
+    Write-Host "Received $n characters, but no postgresql:// connection string was found in it." -ForegroundColor Yellow
+    Write-Host "A Neon connection string is about 100-140 characters and starts with postgresql://" -ForegroundColor Yellow
+    Write-Host "Tip: copy it in Neon (Connect panel -> 'Connection string'), then run:" -ForegroundColor Yellow
+    Write-Host "     .\scripts\setup-remote-db.ps1 -FromClipboard" -ForegroundColor Yellow
+    throw "No Postgres connection string found."
+}
+try {
+    Write-Host ("Using host: " + ([Uri]($DatabaseUrl -replace '^postgres(ql)?://','http://')).Host) -ForegroundColor DarkGray
+} catch { }
 if (-not $AdminPassword) { $AdminPassword = Read-Secret "Choose the admin password (12+ characters)" }
 if ($AdminPassword.Length -lt 12) { throw "Admin password must be at least 12 characters." }
 if ($AdminPassword -eq "changeme") { throw "Do not use the default password." }
