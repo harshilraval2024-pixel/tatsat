@@ -1,4 +1,5 @@
 import os
+import re
 from functools import lru_cache
 
 from pydantic import model_validator
@@ -77,6 +78,14 @@ class Settings(BaseSettings):
         # Heroku-style "postgres://" is not understood by SQLAlchemy 2; treat as postgresql://.
         if u.startswith("postgres://"):
             u = "postgresql://" + u[len("postgres://"):]
+            self.database_url = u
+
+        # Snippets copied from provider docs often name another driver
+        # (postgresql+psycopg://, +psycopg2://, +pg8000://). Only asyncpg and psycopg2
+        # are installed, so normalise to plain postgresql:// and pick drivers below.
+        m = re.match(r"^postgresql\+(\w+)://", u)
+        if m and m.group(1) != "asyncpg":
+            u = "postgresql://" + u[m.end():]
             self.database_url = u
 
         # Local SQLite: one URL drives both engines.
