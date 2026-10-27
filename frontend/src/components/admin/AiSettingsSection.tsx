@@ -34,7 +34,7 @@ const PRESETS: { id: Preset; label: string }[] = [
 const DEFAULT_MODELS: Record<Preset, string> = {
   env: "",
   off: "",
-  gemini: "gemini-2.5-flash",
+  gemini: "Automatic (newest Flash model)",
   openai: "gpt-4o-mini",
   groq: "",
   custom: "",
@@ -79,6 +79,9 @@ export function AiSettingsSection() {
   const [testing, setTesting] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [testResult, setTestResult] = useState<{ ok: boolean; message: string } | null>(null);
+  const [models, setModels] = useState<string[]>([]);
+  const [modelsNote, setModelsNote] = useState<string | null>(null);
+  const [findingModels, setFindingModels] = useState(false);
   const { confirm: askConfirm, dialog: confirmDialog } = useConfirm();
 
   const apply = useCallback((s: AiSettings) => {
@@ -181,6 +184,25 @@ export function AiSettingsSection() {
       setErr(q instanceof Error ? q.message : String(q));
     } finally {
       setBusy(false);
+    }
+  }
+
+  async function findModels() {
+    setFindingModels(true);
+    setModelsNote(null);
+    try {
+      const r = await jfetch<{ models: string[]; recommended: string; message: string }>("/admin/ai-settings/models");
+      setModels(r.models);
+      setModelsNote(
+        r.models.length
+          ? `Found ${r.models.length} models you can use.` +
+              (r.recommended ? ` Leave the field blank to use ${r.recommended} automatically, or pick one from the list.` : " Pick one from the list.")
+          : r.message || "No models found.",
+      );
+    } catch (q) {
+      setModelsNote(q instanceof Error ? q.message : String(q));
+    } finally {
+      setFindingModels(false);
     }
   }
 
@@ -293,6 +315,7 @@ export function AiSettingsSection() {
                 </label>
                 <input
                   id="ai-model"
+                  list="ai-models"
                   className={field}
                   value={model}
                   disabled={busy}
@@ -300,7 +323,24 @@ export function AiSettingsSection() {
                   onChange={(e) => setModel(e.target.value)}
                   placeholder={DEFAULT_MODELS[preset] || "e.g. a vision-capable model name"}
                 />
-                <p className="mt-1 text-xs text-muted">Needs image support for the bill reader.</p>
+                <datalist id="ai-models">
+                  {models.map((m) => (
+                    <option key={m} value={m} />
+                  ))}
+                </datalist>
+                <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-muted">
+                  <span>Needs image support for the bill reader.</span>
+                  <button
+                    type="button"
+                    onClick={findModels}
+                    disabled={findingModels || busy || dirty || !saved.key_set}
+                    title={!saved.key_set ? "Save an API key first" : dirty ? "Save your changes first" : undefined}
+                    className="rounded-full border border-primary/50 px-3 py-1 font-semibold text-primary hover:bg-primary/10 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    {findingModels ? "Searching…" : "Find available models"}
+                  </button>
+                </div>
+                {modelsNote ? <p className="mt-1 text-xs text-white/80">{modelsNote}</p> : null}
               </div>
               <div>
                 <label className={label} htmlFor="ai-limit">

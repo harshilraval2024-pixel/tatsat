@@ -17,6 +17,7 @@ import base64
 import json
 import logging
 import re
+import time
 from dataclasses import dataclass, field
 from typing import Any, Protocol
 
@@ -52,6 +53,8 @@ class Provider(Protocol):
 
     async def extract_json(self, system: str, prompt: str, image: bytes, mime: str) -> dict[str, Any]: ...
 
+    async def list_models(self) -> list[str]: ...
+
 
 def _loads(raw: Any) -> dict[str, Any]:
     if isinstance(raw, dict):
@@ -79,13 +82,85 @@ def parse_json_object(text: str | None) -> dict[str, Any]:
     return data
 
 
+def hashlib_sha(text: str) -> str:
+    import hashlib
+
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()[:16]
+
+
+_FLASH = re.compile(r"^gemini-(\d+(?:\.\d+)*)-flash$")
+_SKIP = re.compile(r"(tts|live|image|embed|transcribe|lite|thinking|audio|robotics|exp|preview|latest)")
+
+
+def pick_default_model(ids: list[str]) -> str | None:
+    """Newest plain 'gemini-<version>-flash' model (best price/speed for chat and vision)."""
+    best: tuple[tuple[int, ...], str] | None = None
+    for mid in ids:
+        m = _FLASH.match(mid)
+        if not m:
+            continue
+        ver = tuple(int(x) for x in m.group(1).split("."))
+        if best is None or ver > best[0]:
+            best = (ver, mid)
+    if best:
+        return best[1]
+    # Otherwise any general-purpose Gemini text model.
+    generic = sorted(i for i in ids if i.startswith("gemini-") and not _SKIP.search(i))
+    return generic[-1] if generic else None
+
+
 # --------------------------------------------------------------------------- Gemini
 class GeminiProvider:
     """Google Gemini via the REST API (free tier available). Key goes in a header, never the URL."""
 
+    # Last-resort name if the live model list cannot be fetched; the list is the real source.
+    FALLBACK_MODEL = "gemini-3.8-flash"
+    _auto_cache: dict[str, tuple[float, str]] = {}
+
     def __init__(self, api_key: str, model: str) -> None:
         self.api_key = api_key
-        self.model = model or "gemini-2.5-flash"
+        self.model = (model or "").strip()
+
+    async def list_models(self) -> list[str]:
+        """Model ids this key can call with generateContent (e.g. 'gemini-3.8-flash')."""
+        try:
+            async with httpx.AsyncClient(timeout=HTTP_TIMEOUT) as client:
+                r = await client.get(
+                    "https://generativelanguage.googleapis.com/v1beta/models",
+                    params={"pageSize": 200},
+                    headers={"x-goog-api-key": self.api_key},
+                )
+        except httpx.HTTPError as e:
+            raise ProviderError(f"gemini transport error: {type(e).__name__}") from e
+        if r.status_code != 200:
+            raise ProviderError(f"gemini HTTP {r.status_code}")
+        try:
+            items = r.json().get("models", [])
+        except ValueError as e:
+            raise ProviderError("gemini returned an unexpected response") from e
+        ids = [
+            m["name"].removeprefix("models/")
+            for m in items
+            if isinstance(m, dict)
+            and "generateContent" in (m.get("supportedGenerationMethods") or [])
+            and str(m.get("name", "")).startswith("models/gemini")
+        ]
+        return sorted(set(ids))
+
+    async def _model_name(self) -> str:
+        """The configured model, or (when left blank) the newest Flash model the key can use."""
+        if self.model:
+            return self.model
+        cache_key = hashlib_sha(self.api_key)
+        hit = self._auto_cache.get(cache_key)
+        if hit and time.monotonic() - hit[0] < 3600:
+            return hit[1]
+        try:
+            name = pick_default_model(await self.list_models()) or self.FALLBACK_MODEL
+        except ProviderError:
+            name = self.FALLBACK_MODEL
+        self._auto_cache[cache_key] = (time.monotonic(), name)
+        return name
 
     @staticmethod
     def _to_contents(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -125,7 +200,7 @@ class GeminiProvider:
         }
         if tools:
             body["tools"] = [{"functionDeclarations": tools}]
-        url = f"https://generativelanguage.googleapis.com/v1beta/models/{self.model}:generateContent"
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/{await self._model_name()}:generateContent"
         try:
             async with httpx.AsyncClient(timeout=HTTP_TIMEOUT) as client:
                 r = await client.post(url, json=body, headers={"x-goog-api-key": self.api_key})
@@ -164,7 +239,7 @@ class GeminiProvider:
                 "responseMimeType": "application/json",
             },
         }
-        url = f"https://generativelanguage.googleapis.com/v1beta/models/{self.model}:generateContent"
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/{await self._model_name()}:generateContent"
         try:
             async with httpx.AsyncClient(timeout=httpx.Timeout(40.0, connect=8.0)) as client:
                 r = await client.post(url, json=body, headers={"x-goog-api-key": self.api_key})
@@ -279,6 +354,21 @@ class OpenAICompatProvider:
         return parse_json_object(content)
 
 
+    async def list_models(self) -> list[str]:
+        try:
+            async with httpx.AsyncClient(timeout=HTTP_TIMEOUT) as client:
+                r = await client.get(f"{self.base_url}/models", headers={"Authorization": f"Bearer {self.api_key}"})
+        except httpx.HTTPError as e:
+            raise ProviderError(f"openai-compat transport error: {type(e).__name__}") from e
+        if r.status_code != 200:
+            raise ProviderError(f"openai-compat HTTP {r.status_code}")
+        try:
+            data = r.json().get("data", [])
+        except ValueError as e:
+            raise ProviderError("openai-compat returned an unexpected response") from e
+        return sorted({m["id"] for m in data if isinstance(m, dict) and isinstance(m.get("id"), str)})
+
+
 # --------------------------------------------------------------------------- Fake (offline)
 class FakeProvider:
     """Deterministic stand-in: no network, no key. Used for tests and local demos.
@@ -329,6 +419,9 @@ class FakeProvider:
             text="I'm the demo advisor. Tell me your monthly electricity bill and I'll estimate a system and subsidy."
         )
 
+
+    async def list_models(self) -> list[str]:
+        return ["fake-model"]
 
     async def extract_json(self, system, prompt, image, mime):  # type: ignore[no-untyped-def]
         # Offline demo/test stand-in: returns a fixed sample, it does not read the image.

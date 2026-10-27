@@ -20,7 +20,7 @@ from app.services.ai.config import (
     key_hint,
     resolve_ai_config,
 )
-from app.services.ai.providers import ProviderError, ProviderResult
+from app.services.ai.providers import GeminiProvider, OpenAICompatProvider, ProviderError, ProviderResult, pick_default_model
 from app.utils import secretbox
 from app.utils.ratelimit import limiter
 
@@ -216,3 +216,117 @@ def test_connection_test_messages(admin_client, monkeypatch):
 def test_connection_test_is_rate_limited(admin_client):
     codes = [admin_client.post("/admin/ai-settings/test").status_code for _ in range(7)]
     assert codes[:5] == [200] * 5 and codes[5:] == [429, 429]
+
+
+# ----------------------------------------------------------------------------- model discovery
+def test_pick_default_model_prefers_newest_plain_flash():
+    ids = [
+        "gemini-2.5-flash", "gemini-3.6-flash", "gemini-3.8-flash", "gemini-3.8-flash-lite-tts",
+        "gemini-3.8-live", "gemini-3.5-flash-lite", "gemini-4-argon", "gemini-flash-latest",
+    ]
+    assert pick_default_model(ids) == "gemini-3.8-flash"
+    assert pick_default_model(["gemini-10.1-flash", "gemini-9.9-flash"]) == "gemini-10.1-flash"  # numeric, not text, order
+    assert pick_default_model(["gemini-4-argon", "gemini-3.8-live", "gemini-3.5-flash-lite"]) == "gemini-4-argon"
+    assert pick_default_model([]) is None
+
+
+class _Resp:
+    def __init__(self, status, payload):
+        self.status_code, self._p = status, payload
+
+    def json(self):
+        return self._p
+
+
+def _fake_client(monkeypatch, handler):
+    import app.services.ai.providers as prov
+
+    class Client:
+        def __init__(self, *a, **k):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *a):
+            return False
+
+        async def get(self, url, params=None, headers=None):
+            return handler("GET", url, None, headers)
+
+        async def post(self, url, json=None, headers=None):
+            return handler("POST", url, json, headers)
+
+    monkeypatch.setattr(prov.httpx, "AsyncClient", Client)
+
+
+def test_gemini_lists_only_generate_content_models_and_auto_picks(monkeypatch):
+    calls = []
+
+    def handler(method, url, body, headers):
+        calls.append((method, url))
+        if method == "GET":
+            return _Resp(200, {"models": [
+                {"name": "models/gemini-3.8-flash", "supportedGenerationMethods": ["generateContent", "countTokens"]},
+                {"name": "models/gemini-3.6-flash", "supportedGenerationMethods": ["generateContent"]},
+                {"name": "models/text-embedding-9", "supportedGenerationMethods": ["embedContent"]},
+                {"name": "models/gemini-embed-1", "supportedGenerationMethods": ["embedContent"]},
+            ]})
+        return _Resp(200, {"candidates": [{"content": {"parts": [{"text": "OK"}]}}]})
+
+    _fake_client(monkeypatch, handler)
+    GeminiProvider._auto_cache.clear()
+    p = GeminiProvider("KEY-AUTO-0001", "")  # blank model -> automatic
+    assert asyncio.run(p.list_models()) == ["gemini-3.6-flash", "gemini-3.8-flash"]
+    asyncio.run(p.generate("s", [{"role": "user", "content": "hi"}], []))
+    asyncio.run(p.generate("s", [{"role": "user", "content": "hi"}], []))
+    posts = [u for m, u in calls if m == "POST"]
+    assert all("/models/gemini-3.8-flash:generateContent" in u for u in posts)
+    assert sum(1 for m, _ in calls if m == "GET") == 2  # one explicit list + one cached auto-resolution
+
+    explicit = GeminiProvider("KEY", "my-model")
+    asyncio.run(explicit.generate("s", [{"role": "user", "content": "hi"}], []))
+    assert "/models/my-model:generateContent" in [u for m, u in calls if m == "POST"][-1]
+
+
+def test_gemini_auto_falls_back_when_list_fails(monkeypatch):
+    def handler(method, url, body, headers):
+        if method == "GET":
+            return _Resp(403, {})
+        return _Resp(200, {"candidates": [{"content": {"parts": [{"text": "OK"}]}}]})
+
+    _fake_client(monkeypatch, handler)
+    GeminiProvider._auto_cache.clear()
+    assert asyncio.run(GeminiProvider("KEY-FALLBACK-1", "")._model_name()) == GeminiProvider.FALLBACK_MODEL
+
+
+def test_openai_compat_lists_models(monkeypatch):
+    _fake_client(monkeypatch, lambda m, u, b, h: _Resp(200, {"data": [{"id": "b-model"}, {"id": "a-model"}, {"nope": 1}]}))
+    assert asyncio.run(OpenAICompatProvider("K", "", "https://x.example/v1").list_models()) == ["a-model", "b-model"]
+
+
+def test_models_endpoint(admin_client, monkeypatch):
+    r = admin_client.get("/admin/ai-settings/models").json()
+    assert r["models"] == [] and "save" in r["message"].lower()
+    put(admin_client)
+
+    class P:
+        async def list_models(self):
+            return ["gemini-3.6-flash", "gemini-3.8-flash"]
+
+    monkeypatch.setattr(admin_ai, "build_provider", lambda *a: P())
+    ok = admin_client.get("/admin/ai-settings/models").json()
+    assert ok["models"] == ["gemini-3.6-flash", "gemini-3.8-flash"] and ok["recommended"] == "gemini-3.8-flash"
+
+    class Bad:
+        async def list_models(self):
+            raise ProviderError("gemini HTTP 403")
+
+    monkeypatch.setattr(admin_ai, "build_provider", lambda *a: Bad())
+    bad = admin_client.get("/admin/ai-settings/models").json()
+    assert bad["models"] == [] and "rejected the API key" in bad["message"] and SECRET_KEY not in str(bad)
+
+
+def test_models_endpoint_requires_admin():
+    app.dependency_overrides.clear()
+    assert TestClient(app).get("/admin/ai-settings/models").status_code == 401

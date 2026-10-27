@@ -20,7 +20,7 @@ from app.services.ai.config import (
     key_hint,
     resolve_ai_config,
 )
-from app.services.ai.providers import ProviderError, build_provider
+from app.services.ai.providers import ProviderError, build_provider, pick_default_model
 from app.services.site_settings import get_site_settings_row
 from app.utils.ratelimit import limiter
 from app.utils.secretbox import decrypt, encrypt
@@ -128,7 +128,10 @@ def _friendly(err: ProviderError) -> str:
         if code in (401, 403):
             return "The provider rejected the API key. Check it is correct, active and allowed to use this model."
         if code == 404:
-            return "Model or endpoint not found. Check the model name (and Base URL for OpenAI-compatible providers)."
+            return (
+                "Model or endpoint not found. Leave the Model field blank for automatic selection, or click "
+                "'Find available models' and pick one (and check the Base URL for OpenAI-compatible providers)."
+            )
         if code == 400:
             return "The provider rejected the request. Check that the API key and the model name are correct."
         if code == 429:
@@ -138,6 +141,40 @@ def _friendly(err: ProviderError) -> str:
     if "transport" in text:
         return "Could not reach the provider. Check the Base URL and that the server has internet access."
     return "The provider returned an unexpected reply. Check the model name."
+
+
+class ModelsOut(BaseModel):
+    models: list[str]
+    recommended: str = ""
+    message: str = ""
+
+
+@router.get("/models", response_model=ModelsOut)
+async def list_available_models(
+    session: Annotated[AsyncSession, Depends(get_db)],
+    admin: Annotated[T.AdminUser, Depends(get_current_admin)],
+) -> ModelsOut:
+    """Ask the provider which models the saved key can use (helps when model names change)."""
+    limiter.check(f"ai-models:{admin.username}", 10, 60)
+    row = await _row(session)
+    cfg = resolve_ai_config(row, get_settings())
+    if cfg.provider in ("", "off") or not cfg.key_readable:
+        return ModelsOut(models=[], message="Choose a provider and save an API key first.")
+    provider = build_provider(cfg.provider, cfg.api_key, cfg.model, cfg.base_url)
+    if provider is None:
+        return ModelsOut(models=[], message="Save an API key first.")
+    try:
+        ids = await provider.list_models()
+    except ProviderError as e:
+        log.warning("AI model list failed: %s", e)
+        return ModelsOut(models=[], message=_friendly(e))
+    except Exception:  # noqa: BLE001
+        log.exception("AI model list crashed")
+        return ModelsOut(models=[], message="Unexpected error while listing models.")
+    rec = (pick_default_model(ids) if cfg.provider == "gemini" else "") or ""
+    if not ids:
+        return ModelsOut(models=[], message="The provider returned no models for this key.")
+    return ModelsOut(models=ids[:200], recommended=rec)
 
 
 @router.post("/test", response_model=AiTestOut)

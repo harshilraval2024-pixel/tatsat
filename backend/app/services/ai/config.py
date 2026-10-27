@@ -13,7 +13,9 @@ from app.utils.secretbox import decrypt
 PROVIDERS = ("gemini", "openai")  # selectable in the admin; "off" disables, "" means "use env"
 
 # Default model shown/used per provider when the admin leaves the field blank.
-DEFAULT_MODELS = {"gemini": "gemini-2.5-flash", "openai": "gpt-4o-mini"}
+# Gemini is "" on purpose: when blank, the newest Flash model the key can use is picked automatically
+# (model names change often). OpenAI keeps a fixed default.
+DEFAULT_MODELS = {"gemini": "", "openai": "gpt-4o-mini"}
 
 
 @dataclass(frozen=True)
