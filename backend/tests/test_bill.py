@@ -208,9 +208,9 @@ def test_endpoint_provider_errors_are_hidden(client):
 
 
 def test_endpoint_off_unconfigured_and_budget(client, monkeypatch):
-    client.state["enabled"] = False
+    client.state["bill"] = False
     assert post_bill(client).json()["fallback"] is True
-    client.state["enabled"] = True
+    client.state["bill"] = True
     app.dependency_overrides[ai_routes.get_provider] = lambda: None
     assert post_bill(client).json()["fallback"] is True
     app.dependency_overrides[ai_routes.get_provider] = lambda: FakeProvider()

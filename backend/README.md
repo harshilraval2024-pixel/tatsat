@@ -91,6 +91,10 @@ rounds, 4 tool calls) → provider adapter in `app/services/ai/providers.py` (Ge
 OpenAI-compatible API such as Groq/OpenAI, or an offline `fake` provider) → tools in
 `app/services/ai/tools.py`. The API key stays on the server.
 
+**Feature switches:** the AI is off by default. In **Admin → AI** two separate boxes control it: *Ask AI chat*
+(adds the "Ask AI" tab to the website chat) and *Bill photo reader* (adds the upload to the Calculator). Each
+feature works only when its own box is ticked **and** a provider with a key is working.
+
 **Easiest setup: Admin → AI tab.** Pick a provider, paste the API key, press *Save*, then *Test connection*.
 The key is stored encrypted in the database (derived from `JWT_SECRET`), is write-only (it can be replaced
 or removed but never viewed or returned by any API), and settings saved there override the environment.

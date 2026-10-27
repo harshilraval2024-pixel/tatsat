@@ -42,8 +42,9 @@ class ChatResponse(BaseModel):
 
 
 class StatusResponse(BaseModel):
-    enabled: bool
+    enabled: bool              # "Ask AI" chat available (provider working AND box ticked in the admin)
     greeting: str = ""
+    bill_reader: bool = False  # bill photo upload available (provider working AND box ticked)
 
 
 async def get_ai_config(session: Annotated[AsyncSession, Depends(get_db)]) -> AiConfig:
@@ -72,7 +73,11 @@ async def ai_status(
     if row is None:
         return StatusResponse(enabled=False)
     contact = site_settings_to_out(row).contact
-    return StatusResponse(enabled=contact.advisor_enabled, greeting=contact.advisor_greeting)
+    return StatusResponse(
+        enabled=bool(row.ai_chat_enabled),
+        greeting=contact.advisor_greeting,
+        bill_reader=bool(row.ai_bill_enabled),
+    )
 
 
 class BillResponse(BaseModel):
@@ -105,7 +110,7 @@ async def ai_read_bill(
     if provider is None:
         return unavailable
     row = await get_site_settings_row(session)
-    if row is None or not site_settings_to_out(row).contact.advisor_enabled:
+    if row is None or not row.ai_bill_enabled:
         return unavailable
     if not daily_budget.take(daily_limit):
         log.warning("advisor daily limit reached (bill reader)")
@@ -139,7 +144,7 @@ async def ai_chat(
     if provider is None:
         return ChatResponse(reply=FALLBACK_REPLY, fallback=True)
     row = await get_site_settings_row(session)
-    if row is None or not site_settings_to_out(row).contact.advisor_enabled:
+    if row is None or not row.ai_chat_enabled:
         return ChatResponse(reply=FALLBACK_REPLY, fallback=True)
     if not daily_budget.take(daily_limit):
         log.warning("advisor daily limit reached")

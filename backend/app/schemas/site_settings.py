@@ -53,7 +53,6 @@ class ContactContent(BaseModel):
         max_length=600,
         description="Placeholders: {business} {name} {topic} {note}. Lines with an empty value are dropped.",
     )
-    advisor_enabled: bool = True
     advisor_greeting: str = Field(
         "Hi! I’m the Solar Advisor. Tell me your monthly bill and city and I’ll size a system and estimate the subsidy.",
         max_length=300,

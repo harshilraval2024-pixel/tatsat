@@ -22,19 +22,29 @@ def client(monkeypatch):
     async def no_db():
         yield None
 
-    row = SimpleNamespace(name="Tatsat NRGS")
+    state = {"chat": True, "bill": True}
+
+    class Row:  # live view of the two admin switches
+        name = "Tatsat NRGS"
+
+        @property
+        def ai_chat_enabled(self):
+            return state["chat"]
+
+        @property
+        def ai_bill_enabled(self):
+            return state["bill"]
+
+    row = Row()
 
     async def fake_row(session):
         return row
 
-    state = {"enabled": True}
     monkeypatch.setattr(ai_routes, "get_site_settings_row", fake_row)
     monkeypatch.setattr(
         ai_routes,
         "site_settings_to_out",
-        lambda r: SimpleNamespace(
-            contact=SimpleNamespace(advisor_enabled=state["enabled"], advisor_greeting="Hello!")
-        ),
+        lambda r: SimpleNamespace(contact=SimpleNamespace(advisor_greeting="Hello!")),
     )
     app.dependency_overrides[get_db] = no_db
     app.dependency_overrides[ai_routes.get_provider] = lambda: FakeProvider()

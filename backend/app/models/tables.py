@@ -16,6 +16,7 @@ from sqlalchemy import (
     String,
     Text,
     UniqueConstraint,
+    false,
     func,
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -239,6 +240,9 @@ class SiteSettings(Base):
     ai_base_url: Mapped[str] = mapped_column(String(300), nullable=False, default="", server_default="")
     ai_key_enc: Mapped[str] = mapped_column(Text, nullable=False, default="", server_default="")
     ai_daily_limit: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    # Feature switches: each AI feature works only when its box is ticked (default off)
+    ai_chat_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default=false())
+    ai_bill_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default=false())
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
     )

@@ -16,6 +16,8 @@ type AiSettings = {
   daily_limit: number;
   default_model: string;
   working_provider: string;
+  chat_enabled: boolean;
+  bill_reader_enabled: boolean;
 };
 
 type Preset = "env" | "off" | "gemini" | "openai" | "groq" | "custom";
@@ -75,6 +77,8 @@ export function AiSettingsSection() {
   const [baseUrl, setBaseUrl] = useState("");
   const [apiKey, setApiKey] = useState("");
   const [limit, setLimit] = useState("");
+  const [chatOn, setChatOn] = useState(false);
+  const [billOn, setBillOn] = useState(false);
   const [busy, setBusy] = useState(false);
   const [testing, setTesting] = useState(false);
   const [err, setErr] = useState<string | null>(null);
@@ -91,6 +95,8 @@ export function AiSettingsSection() {
     setBaseUrl(presetOf(s) === "groq" ? GROQ_URL : s.base_url);
     setLimit(s.source === "admin" || s.daily_limit !== 500 ? String(s.daily_limit) : "");
     setApiKey("");
+    setChatOn(s.chat_enabled);
+    setBillOn(s.bill_reader_enabled);
   }, []);
 
   useEffect(() => {
@@ -110,6 +116,8 @@ export function AiSettingsSection() {
     model.trim() !== saved.model ||
     (providerOf(preset) === "openai" && effectiveBase !== saved.base_url) ||
     apiKey.trim() !== "" ||
+    chatOn !== saved.chat_enabled ||
+    billOn !== saved.bill_reader_enabled ||
     (limit.trim() !== "" && Number(limit) !== saved.daily_limit);
 
   async function save(e: React.FormEvent) {
@@ -144,6 +152,8 @@ export function AiSettingsSection() {
           api_key: apiKey.trim() || null,
           clear_key: false,
           daily_limit: lim,
+          chat_enabled: chatOn,
+          bill_reader_enabled: billOn,
         }),
       });
       apply(next);
@@ -176,6 +186,8 @@ export function AiSettingsSection() {
           api_key: null,
           clear_key: true,
           daily_limit: saved.source === "admin" ? saved.daily_limit : null,
+          chat_enabled: saved.chat_enabled,
+          bill_reader_enabled: saved.bill_reader_enabled,
         }),
       });
       apply(next);
@@ -238,8 +250,8 @@ export function AiSettingsSection() {
           >
             aistudio.google.com/apikey
           </a>
-          . Visitors only see the chat once a provider and key are working and the advisor is switched on in{" "}
-          <strong className="text-white/80">Website → Contact page &amp; WhatsApp card</strong>.
+          . Each AI feature only works when its own box below is ticked <em>and</em> a provider with a key is
+          working.
         </p>
       </div>
 
@@ -264,6 +276,42 @@ export function AiSettingsSection() {
       ) : null}
 
       <form onSubmit={save} className="space-y-5 rounded-3xl border border-white/10 bg-black/10 p-5 sm:p-6" aria-busy={busy}>
+        <fieldset className="rounded-2xl border border-white/10 p-4">
+          <legend className="px-2 text-xs font-semibold uppercase tracking-wide text-muted">AI features</legend>
+          <label className="flex items-start gap-3 text-sm text-white">
+            <input
+              type="checkbox"
+              className="mt-1"
+              checked={chatOn}
+              disabled={busy}
+              onChange={(e) => setChatOn(e.target.checked)}
+            />
+            <span>
+              <strong>Ask AI chat</strong>
+              <span className="block text-xs text-muted">
+                Adds the &quot;Ask AI&quot; tab to the website chat. Visitors can ask about system size, cost and
+                subsidy.
+              </span>
+            </span>
+          </label>
+          <label className="mt-4 flex items-start gap-3 text-sm text-white">
+            <input
+              type="checkbox"
+              className="mt-1"
+              checked={billOn}
+              disabled={busy}
+              onChange={(e) => setBillOn(e.target.checked)}
+            />
+            <span>
+              <strong>Bill photo reader</strong>
+              <span className="block text-xs text-muted">
+                Adds &quot;Upload a bill photo&quot; to the Calculator. The AI reads the bill and fills the form.
+              </span>
+            </span>
+          </label>
+          <p className="mt-3 text-xs text-muted">Both are off until you tick them and press Save.</p>
+        </fieldset>
+
         <div>
           <label className={label} htmlFor="ai-preset">
             Provider

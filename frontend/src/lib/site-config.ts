@@ -32,7 +32,6 @@ export type ContactContent = {
   note_placeholder: string;
   button_label: string;
   message_template: string;
-  advisor_enabled: boolean;
   advisor_greeting: string;
   call_prompt: string;
   call_text: string;
@@ -53,7 +52,6 @@ export const defaultContactContent: ContactContent = {
   note_placeholder: "City, roof type, monthly bill\u2026",
   button_label: "Start WhatsApp chat",
   message_template: "Hi {business},\nI\u2019m {name}.\nI\u2019d like help with: {topic}.\n{note}",
-  advisor_enabled: true,
   advisor_greeting:
     "Hi! I’m the Solar Advisor. Tell me your monthly bill and city and I’ll size a system and estimate the subsidy.",
   call_prompt: "Prefer a call?",
@@ -188,7 +186,6 @@ export function mergeContact(api: Partial<ContactContent> | undefined | null): C
     note_placeholder: str(c.note_placeholder, base.note_placeholder),
     button_label: str(c.button_label, base.button_label),
     message_template: str(c.message_template, base.message_template),
-    advisor_enabled: typeof c.advisor_enabled === "boolean" ? c.advisor_enabled : base.advisor_enabled,
     advisor_greeting: str(c.advisor_greeting, base.advisor_greeting),
     call_prompt: str(c.call_prompt, base.call_prompt),
     call_text: str(c.call_text, base.call_text),

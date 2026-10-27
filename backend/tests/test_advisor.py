@@ -166,12 +166,12 @@ MSG = {"messages": [{"role": "user", "content": "hello there"}]}
 
 
 def test_status_enabled_disabled_and_unconfigured(client):
-    assert client.get("/ai/status").json() == {"enabled": True, "greeting": "Hello!"}
-    client.state["enabled"] = False
+    assert client.get("/ai/status").json() == {"enabled": True, "greeting": "Hello!", "bill_reader": True}
+    client.state["chat"] = False
     assert client.get("/ai/status").json()["enabled"] is False
     app.dependency_overrides[ai_routes.get_provider] = lambda: None
-    client.state["enabled"] = True
-    assert client.get("/ai/status").json() == {"enabled": False, "greeting": ""}
+    client.state["chat"] = True
+    assert client.get("/ai/status").json() == {"enabled": False, "greeting": "", "bill_reader": False}
 
 
 def test_chat_success(client):
@@ -202,7 +202,7 @@ def test_chat_fallbacks(client):
     assert r["fallback"] is True and r["reply"] == FALLBACK_REPLY
 
     app.dependency_overrides[ai_routes.get_provider] = lambda: FakeProvider()
-    client.state["enabled"] = False  # switched off in the admin
+    client.state["chat"] = False  # switched off in the admin
     assert client.post("/ai/chat", json=MSG).json()["fallback"] is True
 
 
@@ -233,3 +233,37 @@ def test_chat_rate_limit_and_daily_cap(client, monkeypatch):
     app.dependency_overrides[ai_routes.get_daily_limit] = lambda: 2
     results = [client.post("/ai/chat", json=MSG).json()["fallback"] for _ in range(4)]
     assert results == [False, False, True, True]
+
+
+def test_each_ai_feature_works_only_when_its_own_box_is_ticked(client, monkeypatch):
+    from app.services.ai import bill as bill_mod
+    from tests.test_bill import PNG
+
+    async def known_state(session, name):
+        return SimpleNamespace(name="Gujarat")
+
+    monkeypatch.setattr(bill_mod, "_get_state_by_name", known_state)
+
+    def chat_fallback():
+        return client.post("/ai/chat", json=MSG).json()["fallback"]
+
+    def bill_fallback():
+        return client.post("/ai/read-bill", files={"file": ("b.png", PNG, "image/png")}).json()["fallback"]
+
+    client.state.update(chat=True, bill=True)
+    assert (chat_fallback(), bill_fallback()) == (False, False)
+
+    client.state.update(chat=True, bill=False)  # chat only
+    limiter._hits.clear()
+    assert client.get("/ai/status").json() == {"enabled": True, "greeting": "Hello!", "bill_reader": False}
+    assert (chat_fallback(), bill_fallback()) == (False, True)
+
+    client.state.update(chat=False, bill=True)  # bill reader only
+    limiter._hits.clear()
+    assert client.get("/ai/status").json() == {"enabled": False, "greeting": "Hello!", "bill_reader": True}
+    assert (chat_fallback(), bill_fallback()) == (True, False)
+
+    client.state.update(chat=False, bill=False)  # everything off (the default)
+    limiter._hits.clear()
+    assert client.get("/ai/status").json() == {"enabled": False, "greeting": "Hello!", "bill_reader": False}
+    assert (chat_fallback(), bill_fallback()) == (True, True)

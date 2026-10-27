@@ -122,7 +122,10 @@ def admin_client(tmp_path):
 
 
 def put(c, **kw):
-    body = {"provider": "gemini", "model": "", "base_url": "", "api_key": SECRET_KEY, "clear_key": False, "daily_limit": None}
+    body = {
+        "provider": "gemini", "model": "", "base_url": "", "api_key": SECRET_KEY, "clear_key": False,
+        "daily_limit": None, "chat_enabled": False, "bill_reader_enabled": False,
+    }
     body.update(kw)
     return c.put("/admin/ai-settings", json=body)
 
@@ -546,3 +549,25 @@ def test_auth_errors_do_not_trigger_fallback(monkeypatch):
     with pytest.raises(ProviderError):
         asyncio.run(GeminiProvider("KEY-AUTH-00001", "").generate("s", [{"role": "user", "content": "hi"}], []))
     assert len(posted) == 1  # a bad key is reported immediately, not retried across models
+
+
+def test_feature_switches_default_off_and_round_trip(admin_client):
+    d = admin_client.get("/admin/ai-settings").json()
+    assert d["chat_enabled"] is False and d["bill_reader_enabled"] is False  # nothing works until ticked
+    both = put(admin_client, chat_enabled=True, bill_reader_enabled=True).json()
+    assert both["chat_enabled"] is True and both["bill_reader_enabled"] is True
+    only_chat = put(admin_client, api_key=None, chat_enabled=True, bill_reader_enabled=False).json()
+    assert only_chat["chat_enabled"] is True and only_chat["bill_reader_enabled"] is False and only_chat["key_set"] is True
+    # the public status endpoint reflects the switches (needs a configured provider)
+    app.dependency_overrides[ai_routes_get_provider()] = lambda: object()
+    st = admin_client.get("/ai/status").json()
+    assert st["enabled"] is True and st["bill_reader"] is False
+    off = put(admin_client, api_key=None).json()
+    assert off["chat_enabled"] is False and off["bill_reader_enabled"] is False
+    assert admin_client.get("/ai/status").json()["enabled"] is False
+
+
+def ai_routes_get_provider():
+    from app.routes import ai as ai_routes
+
+    return ai_routes.get_provider

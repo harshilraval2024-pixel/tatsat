@@ -40,6 +40,8 @@ class AiSettingsOut(BaseModel):
     daily_limit: int
     default_model: str
     working_provider: str         # what is actually in effect right now
+    chat_enabled: bool            # "Ask AI" chat switched on
+    bill_reader_enabled: bool     # bill photo reader switched on
 
 
 class AiSettingsIn(BaseModel):
@@ -49,6 +51,8 @@ class AiSettingsIn(BaseModel):
     api_key: Optional[str] = Field(None, max_length=400)  # None/blank = keep the saved key
     clear_key: bool = False
     daily_limit: Optional[int] = Field(None, ge=1, le=100_000)
+    chat_enabled: bool = False
+    bill_reader_enabled: bool = False
 
 
 class AiTestOut(BaseModel):
@@ -81,6 +85,8 @@ def _out(row: T.SiteSettings) -> AiSettingsOut:
         daily_limit=cfg.daily_limit,
         default_model=DEFAULT_MODELS.get(prov or cfg.provider, ""),
         working_provider=working,
+        chat_enabled=bool(row.ai_chat_enabled),
+        bill_reader_enabled=bool(row.ai_bill_enabled),
     )
 
 
@@ -110,6 +116,8 @@ async def put_ai_settings(
     row.ai_model = model
     row.ai_base_url = base_url
     row.ai_daily_limit = body.daily_limit
+    row.ai_chat_enabled = body.chat_enabled
+    row.ai_bill_enabled = body.bill_reader_enabled
     if body.clear_key:
         row.ai_key_enc = ""
     elif new_key:

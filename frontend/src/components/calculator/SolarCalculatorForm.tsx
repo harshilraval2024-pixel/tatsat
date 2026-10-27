@@ -89,8 +89,8 @@ export function SolarCalculatorForm() {
 
   useEffect(() => {
     let cancelled = false;
-    jfetch<{ enabled: boolean }>("/ai/status", { auth: false })
-      .then((s) => !cancelled && setAiOn(!!s.enabled))
+    jfetch<{ bill_reader: boolean }>("/ai/status", { auth: false })
+      .then((s) => !cancelled && setAiOn(!!s.bill_reader))
       .catch(() => !cancelled && setAiOn(false));
     return () => {
       cancelled = true;
