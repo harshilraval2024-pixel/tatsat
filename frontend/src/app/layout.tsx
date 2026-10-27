@@ -3,8 +3,7 @@ import { Manrope, Syne } from "next/font/google";
 import "./globals.css";
 import { Navbar } from "@/components/layout/Navbar";
 import { Footer } from "@/components/layout/Footer";
-import { WhatsAppFloat } from "@/components/WhatsAppFloat";
-import { SolarAdvisor } from "@/components/SolarAdvisor";
+import { ChatWidget } from "@/components/chat/ChatWidget";
 import { Providers } from "./providers";
 import { site } from "@/lib/site";
 import { getSiteConfig } from "@/lib/get-site-config";
@@ -88,8 +87,7 @@ export default async function RootLayout({
           <Navbar />
           <main className="flex-1">{children}</main>
           <Footer />
-          <WhatsAppFloat />
-          <SolarAdvisor />
+          <ChatWidget />
           <Providers />
         </SiteConfigProvider>
       </body>
