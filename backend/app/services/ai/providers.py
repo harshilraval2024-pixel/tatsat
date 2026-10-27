@@ -13,6 +13,7 @@ either final text or tool calls to run.
 
 from __future__ import annotations
 
+import base64
 import json
 import logging
 import re
@@ -49,6 +50,8 @@ class Provider(Protocol):
         self, system: str, messages: list[dict[str, Any]], tools: list[dict[str, Any]]
     ) -> ProviderResult: ...
 
+    async def extract_json(self, system: str, prompt: str, image: bytes, mime: str) -> dict[str, Any]: ...
+
 
 def _loads(raw: Any) -> dict[str, Any]:
     if isinstance(raw, dict):
@@ -58,6 +61,22 @@ def _loads(raw: Any) -> dict[str, Any]:
         return v if isinstance(v, dict) else {}
     except (TypeError, ValueError):
         return {}
+
+
+def parse_json_object(text: str | None) -> dict[str, Any]:
+    """Pull the first JSON object out of a model reply (tolerates ```json fences and chatter)."""
+    if not text:
+        raise ProviderError("empty model reply")
+    start, end = text.find("{"), text.rfind("}")
+    if start == -1 or end <= start:
+        raise ProviderError("model reply had no JSON object")
+    try:
+        data = json.loads(text[start : end + 1])
+    except ValueError as e:
+        raise ProviderError("model reply was not valid JSON") from e
+    if not isinstance(data, dict):
+        raise ProviderError("model reply JSON was not an object")
+    return data
 
 
 # --------------------------------------------------------------------------- Gemini
@@ -127,6 +146,39 @@ class GeminiProvider:
         return ProviderResult(text=text or None, tool_calls=calls)
 
 
+    async def extract_json(self, system, prompt, image, mime):  # type: ignore[no-untyped-def]
+        body = {
+            "systemInstruction": {"parts": [{"text": system}]},
+            "contents": [
+                {
+                    "role": "user",
+                    "parts": [
+                        {"text": prompt},
+                        {"inline_data": {"mime_type": mime, "data": base64.b64encode(image).decode()}},
+                    ],
+                }
+            ],
+            "generationConfig": {
+                "maxOutputTokens": 400,
+                "temperature": 0,
+                "responseMimeType": "application/json",
+            },
+        }
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/{self.model}:generateContent"
+        try:
+            async with httpx.AsyncClient(timeout=httpx.Timeout(40.0, connect=8.0)) as client:
+                r = await client.post(url, json=body, headers={"x-goog-api-key": self.api_key})
+        except httpx.HTTPError as e:
+            raise ProviderError(f"gemini transport error: {type(e).__name__}") from e
+        if r.status_code != 200:
+            raise ProviderError(f"gemini HTTP {r.status_code}")
+        try:
+            parts = r.json()["candidates"][0]["content"]["parts"]
+        except (KeyError, IndexError, ValueError) as e:
+            raise ProviderError("gemini returned an unexpected response") from e
+        return parse_json_object("".join(p.get("text", "") for p in parts))
+
+
 # --------------------------------------------------------------------------- OpenAI-compatible
 class OpenAICompatProvider:
     """Any OpenAI-style /chat/completions API: OpenAI, Groq, OpenRouter, Together, ..."""
@@ -192,6 +244,41 @@ class OpenAICompatProvider:
         return ProviderResult(text=(msg.get("content") or "").strip() or None, tool_calls=calls)
 
 
+    async def extract_json(self, system, prompt, image, mime):  # type: ignore[no-untyped-def]
+        data_url = f"data:{mime};base64,{base64.b64encode(image).decode()}"
+        body = {
+            "model": self.model,
+            "messages": [
+                {"role": "system", "content": system},
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": prompt},
+                        {"type": "image_url", "image_url": {"url": data_url}},
+                    ],
+                },
+            ],
+            "max_tokens": 400,
+            "temperature": 0,
+        }
+        try:
+            async with httpx.AsyncClient(timeout=httpx.Timeout(40.0, connect=8.0)) as client:
+                r = await client.post(
+                    f"{self.base_url}/chat/completions",
+                    json=body,
+                    headers={"Authorization": f"Bearer {self.api_key}"},
+                )
+        except httpx.HTTPError as e:
+            raise ProviderError(f"openai-compat transport error: {type(e).__name__}") from e
+        if r.status_code != 200:
+            raise ProviderError(f"openai-compat HTTP {r.status_code}")
+        try:
+            content = r.json()["choices"][0]["message"].get("content")
+        except (KeyError, IndexError, ValueError) as e:
+            raise ProviderError("openai-compat returned an unexpected response") from e
+        return parse_json_object(content)
+
+
 # --------------------------------------------------------------------------- Fake (offline)
 class FakeProvider:
     """Deterministic stand-in: no network, no key. Used for tests and local demos.
@@ -241,6 +328,18 @@ class FakeProvider:
         return ProviderResult(
             text="I'm the demo advisor. Tell me your monthly electricity bill and I'll estimate a system and subsidy."
         )
+
+
+    async def extract_json(self, system, prompt, image, mime):  # type: ignore[no-untyped-def]
+        # Offline demo/test stand-in: returns a fixed sample, it does not read the image.
+        return {
+            "units_kwh": 428,
+            "bill_amount_inr": 3150,
+            "state": "Gujarat",
+            "billing_months": 1,
+            "utility": "Demo Utility",
+            "confidence": 0.9,
+        }
 
 
 def build_provider(name: str, api_key: str, model: str, base_url: str) -> Provider | None:

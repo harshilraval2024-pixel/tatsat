@@ -101,6 +101,11 @@ Environment variables (nothing is shown on the site until a provider is configur
 | `AI_BASE_URL` | `https://api.groq.com/openai/v1` | only for `openai`-style providers |
 | `AI_DAILY_LIMIT` | `500` | hard cap on chat requests per day (protects your bill) |
 
+**Bill reader:** `POST /ai/read-bill` takes a photo of an electricity bill (JPG/PNG/WebP, max 5 MB) and a
+vision model returns units, amount and state, which pre-fill the calculator. The image is never stored; it
+is validated by magic bytes, the reply is validated and range-checked, bi-monthly bills are converted to
+monthly, and the state is matched against the states table. Stricter limits: 5/min and 20/hour per visitor.
+
 Safeguards: per-IP rate limits (12/min, 60/hour), message length and history caps, a daily cap,
 tool-argument validation, an injection-resistant system prompt, and a friendly WhatsApp fallback on any
 provider failure. The advisor can be switched off instantly in Admin → Website → *Contact page &

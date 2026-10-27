@@ -97,6 +97,23 @@ export async function jfetch<T>(
   return (await res.text()) as T;
 }
 
+/** Public multipart POST (no auth header), e.g. the bill photo reader. Throws Error with the server's message. */
+export async function postPublicForm<T>(path: string, form: FormData, signal?: AbortSignal): Promise<T> {
+  const res = await fetch(apiUrl(path), { method: "POST", body: form, signal });
+  if (!res.ok) {
+    let msg = res.statusText;
+    try {
+      const j: { detail?: string | { msg: string }[] } = await res.json();
+      if (typeof j.detail === "string") msg = j.detail;
+      else if (Array.isArray(j.detail)) msg = j.detail.map((x) => x.msg).join(", ");
+    } catch {
+      /* keep statusText */
+    }
+    throw new Error(msg);
+  }
+  return (await res.json()) as T;
+}
+
 export function downloadWithAuth(path: string): Promise<Response> {
   const t = getAdminToken();
   return fetch(apiUrl(path), {

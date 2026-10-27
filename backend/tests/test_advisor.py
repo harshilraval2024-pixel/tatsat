@@ -162,36 +162,6 @@ def test_advisor_truncates_long_reply():
 
 
 # ----------------------------------------------------------------------------- HTTP endpoint
-@pytest.fixture()
-def client(monkeypatch):
-    limiter._hits.clear()
-    advisor_mod.daily_budget._count = 0
-
-    async def no_db():
-        yield None
-
-    row = SimpleNamespace(name="Tatsat NRGS")
-
-    async def fake_row(session):
-        return row
-
-    state = {"enabled": True}
-    monkeypatch.setattr(ai_routes, "get_site_settings_row", fake_row)
-    monkeypatch.setattr(
-        ai_routes,
-        "site_settings_to_out",
-        lambda r: SimpleNamespace(
-            contact=SimpleNamespace(advisor_enabled=state["enabled"], advisor_greeting="Hello!")
-        ),
-    )
-    app.dependency_overrides[get_db] = no_db
-    app.dependency_overrides[ai_routes.get_provider] = lambda: FakeProvider()
-    c = TestClient(app)
-    c.state = state  # type: ignore[attr-defined]
-    yield c
-    app.dependency_overrides.clear()
-
-
 MSG = {"messages": [{"role": "user", "content": "hello there"}]}
 
 

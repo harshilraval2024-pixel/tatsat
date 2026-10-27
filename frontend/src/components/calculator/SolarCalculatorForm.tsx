@@ -1,8 +1,9 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
-import { jfetch } from "@/lib/nrgs-api";
+import { jfetch, postPublicForm } from "@/lib/nrgs-api";
+import { prepareBillImage, UnsupportedImageError } from "@/lib/image";
 
 type StateOpt = { id: number; name: string; code?: string };
 type DistrictOpt = { id: number; name: string; state_id: number };
@@ -28,6 +29,19 @@ export type EstimateResponse = {
   details: Record<string, unknown>;
 };
 
+type BillRead = {
+  fields: {
+    monthly_units: number | null;
+    monthly_bill: number | null;
+    state: string | null;
+    utility: string | null;
+    billing_months: number;
+    confidence: number | null;
+  } | null;
+  fallback: boolean;
+  message: string;
+};
+
 const inputClass =
   "focus-ring mt-2 w-full rounded-2xl border border-white/10 bg-black/40 px-4 py-3 text-sm text-white placeholder:text-white/30";
 const labelClass = "text-xs font-semibold uppercase tracking-wide text-muted";
@@ -50,6 +64,11 @@ export function SolarCalculatorForm() {
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState<EstimateResponse | null>(null);
   const [err, setErr] = useState<string | null>(null);
+  const [aiOn, setAiOn] = useState(false);
+  const [reading, setReading] = useState(false);
+  const [billNote, setBillNote] = useState<{ tone: "ok" | "warn" | "error"; text: string } | null>(null);
+  const billInput = useRef<HTMLInputElement>(null);
+  const readingNow = useRef(false);
 
   const selectedStateName = states.find((s) => s.id === stateId)?.name ?? "";
 
@@ -67,6 +86,76 @@ export function SolarCalculatorForm() {
       })
       .catch(() => toast.error("Could not load states. Is the API running?"));
   }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    jfetch<{ enabled: boolean }>("/ai/status", { auth: false })
+      .then((s) => !cancelled && setAiOn(!!s.enabled))
+      .catch(() => !cancelled && setAiOn(false));
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  async function onBillPicked(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (billInput.current) billInput.current.value = ""; // allow re-picking the same file
+    if (!file || readingNow.current) return;
+    readingNow.current = true;
+    setReading(true);
+    setBillNote(null);
+    setErr(null);
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 60_000);
+    try {
+      const blob = await prepareBillImage(file);
+      const form = new FormData();
+      form.append("file", blob, "bill.jpg");
+      const res = await postPublicForm<BillRead>("/ai/read-bill", form, ctrl.signal);
+      const f = res.fields;
+      if (!f) {
+        setBillNote({ tone: res.fallback ? "error" : "warn", text: res.message || "Couldn't read the bill." });
+        return;
+      }
+      if (f.monthly_units != null) setMonthlyUnits(String(f.monthly_units));
+      if (f.monthly_bill != null) setMonthlyBill(String(f.monthly_bill));
+      setMode(f.monthly_units != null ? "units" : "bill");
+      if (f.state) {
+        const match = states.find((s) => s.name.toLowerCase() === f.state!.toLowerCase());
+        if (match) {
+          setStateId(match.id);
+          setDistrictName("");
+        }
+      }
+      const parts = [
+        f.monthly_units != null ? `${f.monthly_units} kWh/month` : null,
+        f.monthly_bill != null ? `₹${Math.round(f.monthly_bill).toLocaleString("en-IN")}/month` : null,
+        f.state,
+      ].filter(Boolean);
+      const shaky = f.confidence != null && f.confidence < 0.5;
+      setBillNote({
+        tone: shaky ? "warn" : "ok",
+        text:
+          `We read: ${parts.join(" · ")}` +
+          (f.billing_months === 2 ? " (bi-monthly bill, converted to monthly)" : "") +
+          (shaky ? ". We are not very sure, so please check the numbers." : ". Please check they look right.") +
+          " Edit anything below, then press Calculate.",
+      });
+    } catch (q) {
+      if (q instanceof UnsupportedImageError) setBillNote({ tone: "error", text: q.message });
+      else if (q instanceof DOMException && q.name === "AbortError")
+        setBillNote({ tone: "error", text: "Reading took too long. Please try again, or type your bill amount." });
+      else if (q instanceof TypeError)
+        setBillNote({ tone: "error", text: "Cannot reach the server. Check your connection and try again." });
+      else if (q instanceof Error && /too many/i.test(q.message))
+        setBillNote({ tone: "error", text: "Too many uploads. Please wait a minute, or type your bill amount." });
+      else setBillNote({ tone: "error", text: q instanceof Error ? q.message : "Couldn't read the bill." });
+    } finally {
+      clearTimeout(timer);
+      readingNow.current = false;
+      setReading(false);
+    }
+  }
 
   useEffect(() => {
     let cancelled = false;
@@ -188,6 +277,54 @@ export function SolarCalculatorForm() {
             </datalist>
           </div>
         </div>
+
+        {aiOn ? (
+          <div className="rounded-2xl border border-dashed border-primary/40 bg-primary/5 p-4">
+            <div className="flex flex-wrap items-center gap-3">
+              <button
+                type="button"
+                disabled={reading}
+                onClick={() => billInput.current?.click()}
+                className="inline-flex items-center gap-2 rounded-full border border-primary/60 px-4 py-2 text-xs font-semibold uppercase tracking-wide text-primary transition hover:bg-primary/10 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {reading ? (
+                  <>
+                    <span
+                      className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-primary border-t-transparent"
+                      aria-hidden
+                    />
+                    Reading your bill…
+                  </>
+                ) : (
+                  <>
+                    <span aria-hidden>📷</span> Upload a bill photo
+                  </>
+                )}
+              </button>
+              <span className="text-xs text-muted">
+                Optional — we&apos;ll fill the form for you. The photo is read by an AI service and is not stored.
+              </span>
+            </div>
+            <input
+              ref={billInput}
+              type="file"
+              accept="image/jpeg,image/png,image/webp"
+              capture="environment"
+              className="sr-only"
+              aria-label="Electricity bill photo"
+              onChange={onBillPicked}
+              disabled={reading}
+            />
+            {billNote ? (
+              <p
+                role={billNote.tone === "error" ? "alert" : "status"}
+                className={`mt-3 text-sm ${billNote.tone === "ok" ? "text-white" : billNote.tone === "warn" ? "text-secondary" : "text-accent"}`}
+              >
+                {billNote.text}
+              </p>
+            ) : null}
+          </div>
+        ) : null}
 
         <div className="flex flex-wrap gap-2">
           <button
@@ -321,7 +458,7 @@ export function SolarCalculatorForm() {
 
         <button
           type="submit"
-          disabled={loading}
+          disabled={loading || reading}
           className="focus-ring w-full rounded-2xl bg-primary px-6 py-3 text-sm font-bold uppercase tracking-wide text-bg disabled:opacity-50"
         >
           {loading ? "Calculating…" : "Calculate estimate"}
