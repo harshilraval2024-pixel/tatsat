@@ -91,7 +91,12 @@ rounds, 4 tool calls) → provider adapter in `app/services/ai/providers.py` (Ge
 OpenAI-compatible API such as Groq/OpenAI, or an offline `fake` provider) → tools in
 `app/services/ai/tools.py`. The API key stays on the server.
 
-Environment variables (nothing is shown on the site until a provider is configured):
+**Easiest setup: Admin → AI tab.** Pick a provider, paste the API key, press *Save*, then *Test connection*.
+The key is stored encrypted in the database (derived from `JWT_SECRET`), is write-only (it can be replaced
+or removed but never viewed or returned by any API), and settings saved there override the environment.
+If `JWT_SECRET` ever changes, saved keys become unreadable and must be entered again.
+
+Or use environment variables (nothing is shown on the site until a provider is configured):
 
 | Variable | Example | Notes |
 |---|---|---|
@@ -113,6 +118,12 @@ WhatsApp card*.
 
 Try it offline: `AI_PROVIDER=fake` (no key needed). Run the tests with
 `pip install -r requirements-dev.txt` then `python -m pytest` (no network or key required).
+
+## Automatic migrations
+
+On Render (where free web services have no shell or pre-deploy step) the API runs `alembic upgrade head`
+itself at startup, so new releases apply their own schema changes. Elsewhere it is off; override with
+`AUTO_MIGRATE=true|false`. A failed migration is logged and the API stays up (see `/health/db`).
 
 ## Docker (PostgreSQL)
 

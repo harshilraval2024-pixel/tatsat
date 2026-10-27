@@ -57,6 +57,10 @@ class Settings(BaseSettings):
         r"|^https?://172\.(1[6-9]|2\d|3[0-1])\.\d{1,3}\.\d{1,3}(:\d+)?$"
     )
 
+    # Apply pending Alembic migrations when the API starts. Default: on when running on Render
+    # (free web services have no shell/pre-deploy step), off elsewhere. Override with AUTO_MIGRATE=true/false.
+    auto_migrate: bool | None = None
+
     # Solar Advisor (LLM chat). Disabled until a provider + key are configured.
     #   ai_provider: "gemini" | "openai" (any OpenAI-compatible API: OpenAI, Groq, ...) | "fake" (offline demo/tests)
     ai_provider: str = ""

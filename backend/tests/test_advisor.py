@@ -230,6 +230,6 @@ def test_chat_rate_limit_and_daily_cap(client, monkeypatch):
 
     limiter._hits.clear()
     advisor_mod.daily_budget._count = 0
-    monkeypatch.setattr(ai_routes, "get_settings", lambda: SimpleNamespace(ai_daily_limit=2))
+    app.dependency_overrides[ai_routes.get_daily_limit] = lambda: 2
     results = [client.post("/ai/chat", json=MSG).json()["fallback"] for _ in range(4)]
     assert results == [False, False, True, True]

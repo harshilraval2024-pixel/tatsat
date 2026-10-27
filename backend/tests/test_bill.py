@@ -214,7 +214,7 @@ def test_endpoint_off_unconfigured_and_budget(client, monkeypatch):
     app.dependency_overrides[ai_routes.get_provider] = lambda: None
     assert post_bill(client).json()["fallback"] is True
     app.dependency_overrides[ai_routes.get_provider] = lambda: FakeProvider()
-    monkeypatch.setattr(ai_routes, "get_settings", lambda: SimpleNamespace(ai_daily_limit=1))
+    app.dependency_overrides[ai_routes.get_daily_limit] = lambda: 1
     advisor_mod.daily_budget._count = 0
     first, second = post_bill(client).json(), post_bill(client).json()
     assert first["fallback"] is False and second["fallback"] is True

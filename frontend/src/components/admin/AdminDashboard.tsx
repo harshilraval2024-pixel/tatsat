@@ -14,9 +14,10 @@ import { useAdminSession } from "@/lib/use-admin-session";
 import { CmsProjectsSection } from "@/components/admin/CmsProjectsSection";
 import { CmsServicesSection } from "@/components/admin/CmsServicesSection";
 import { useConfirm } from "@/components/admin/useConfirm";
+import { AiSettingsSection } from "@/components/admin/AiSettingsSection";
 import { defaultContactContent, mergeContact, type ContactContent } from "@/lib/site-config";
 
-type Tab = "site" | "projects" | "services" | "pricing" | "subsidy" | "location" | "leads";
+type Tab = "site" | "projects" | "services" | "pricing" | "subsidy" | "location" | "leads" | "ai";
 
 type SiteSettingsApi = {
   name: string;
@@ -741,6 +742,7 @@ export function AdminDashboard() {
               ["subsidy", "Subsidy"],
               ["location", "Location"],
               ["leads", "Leads"],
+              ["ai", "AI"],
             ] as const
           ).map(([id, labelText]) => (
             <button
@@ -1421,6 +1423,7 @@ export function AdminDashboard() {
           </form>
           </div>
         )}
+        {tab === "ai" && <AiSettingsSection />}
         {tab === "projects" && <CmsProjectsSection />}
         {tab === "services" && <CmsServicesSection />}
         {tab === "pricing" && !pricing ? (

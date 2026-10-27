@@ -14,8 +14,9 @@ from app.database import Base
 from app.models import tables  # noqa: F401  — register models
 
 config = context.config
-if config.config_file_name is not None:
-    fileConfig(config.config_file_name)
+# When migrations run inside the API process, keep the app's own logging untouched.
+if config.config_file_name is not None and config.attributes.get("configure_logger", True):
+    fileConfig(config.config_file_name, disable_existing_loggers=False)
 
 target_metadata = Base.metadata
 settings = get_settings()

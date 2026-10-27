@@ -85,7 +85,7 @@ class GeminiProvider:
 
     def __init__(self, api_key: str, model: str) -> None:
         self.api_key = api_key
-        self.model = model or "gemini-2.0-flash"
+        self.model = model or "gemini-2.5-flash"
 
     @staticmethod
     def _to_contents(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -345,6 +345,8 @@ class FakeProvider:
 def build_provider(name: str, api_key: str, model: str, base_url: str) -> Provider | None:
     """Return a provider instance, or None when the advisor is not configured."""
     n = (name or "").strip().lower()
+    if n in ("", "off"):
+        return None
     if n == "fake":
         return FakeProvider()
     if not api_key:

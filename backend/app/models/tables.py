@@ -233,6 +233,12 @@ class SiteSettings(Base):
     social_youtube: Mapped[str] = mapped_column(String(500), nullable=False, default="")
     theme: Mapped[str] = mapped_column(String(20), nullable=False, default="dark", server_default="dark")
     contact_json: Mapped[str] = mapped_column(Text, nullable=False, default="{}", server_default="{}")
+    # AI assistant settings (key is stored encrypted, never exposed by any API)
+    ai_provider: Mapped[str] = mapped_column(String(20), nullable=False, default="", server_default="")
+    ai_model: Mapped[str] = mapped_column(String(100), nullable=False, default="", server_default="")
+    ai_base_url: Mapped[str] = mapped_column(String(300), nullable=False, default="", server_default="")
+    ai_key_enc: Mapped[str] = mapped_column(Text, nullable=False, default="", server_default="")
+    ai_daily_limit: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
     )

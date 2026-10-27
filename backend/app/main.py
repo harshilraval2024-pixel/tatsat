@@ -14,7 +14,7 @@ from app.config import get_settings
 from app.database import get_db
 from app.dependencies import get_current_admin
 from app.models import tables as T
-from app.routes import admin, ai, cms, health, public
+from app.routes import admin, admin_ai, ai, cms, health, public
 from app.services.leads_export import streaming_leads_csv
 
 settings = get_settings()
@@ -81,6 +81,36 @@ async def database_error_handler(_request: Request, exc: SQLAlchemyError) -> JSO
     return JSONResponse(status_code=503, content={"detail": detail})
 
 
+def _run_migrations() -> None:
+    """Upgrade the database schema to the latest Alembic revision (blocking)."""
+    from alembic import command
+    from alembic.config import Config
+
+    backend_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    cfg = Config(os.path.join(backend_dir, "alembic.ini"))
+    cfg.set_main_option("script_location", os.path.join(backend_dir, "alembic"))
+    cfg.attributes["configure_logger"] = False
+    command.upgrade(cfg, "head")
+
+
+@app.on_event("startup")
+async def migrate_on_startup() -> None:
+    on_render = os.environ.get("RENDER", "").lower() in ("true", "1", "yes")
+    enabled = settings.auto_migrate if settings.auto_migrate is not None else on_render
+    if not enabled:
+        return
+    url = settings.database_url.lower()
+    if on_render and ("127.0.0.1" in url or "localhost" in url):
+        return  # no real database configured yet; startup_check reports it
+    try:
+        import anyio
+
+        await anyio.to_thread.run_sync(_run_migrations)
+        log.info("Database migrations are up to date.")
+    except Exception:  # noqa: BLE001 - keep the API up; /health/db and logs show the problem
+        log.exception("Automatic database migration failed")
+
+
 @app.on_event("startup")
 async def startup_check() -> None:
     if os.environ.get("RENDER", "").lower() not in ("true", "1", "yes"):
@@ -120,6 +150,7 @@ app.include_router(public.router)
 app.include_router(admin.router)
 app.include_router(cms.router)
 app.include_router(ai.router)
+app.include_router(admin_ai.router)
 
 
 @app.get("/export-leads")

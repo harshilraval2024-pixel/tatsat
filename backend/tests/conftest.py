@@ -9,6 +9,7 @@ from app.database import get_db
 from app.main import app
 from app.routes import ai as ai_routes
 from app.services.ai import advisor as advisor_mod
+from app.services.ai.config import AiConfig
 from app.services.ai.providers import FakeProvider
 from app.utils.ratelimit import limiter
 
@@ -37,6 +38,8 @@ def client(monkeypatch):
     )
     app.dependency_overrides[get_db] = no_db
     app.dependency_overrides[ai_routes.get_provider] = lambda: FakeProvider()
+    app.dependency_overrides[ai_routes.get_ai_config] = lambda: AiConfig("fake", "", "", "", 500, "env")
+    app.dependency_overrides[ai_routes.get_daily_limit] = lambda: 500
     c = TestClient(app)
     c.state = state  # type: ignore[attr-defined]
     yield c

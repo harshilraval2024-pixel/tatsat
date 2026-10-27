@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import get_settings
 from app.database import get_db
 from app.services.ai.advisor import FALLBACK_REPLY, daily_budget, run_advisor
+from app.services.ai.config import AiConfig, resolve_ai_config
 from app.services.ai.bill import MAX_IMAGE_BYTES, BillFields, read_bill, sniff_image
 from app.services.ai.providers import Provider, ProviderError, build_provider
 from app.services.site_settings import get_site_settings_row, site_settings_to_out
@@ -45,9 +46,18 @@ class StatusResponse(BaseModel):
     greeting: str = ""
 
 
-def get_provider() -> Provider | None:
-    s = get_settings()
-    return build_provider(s.ai_provider, s.ai_api_key, s.ai_model, s.ai_base_url)
+async def get_ai_config(session: Annotated[AsyncSession, Depends(get_db)]) -> AiConfig:
+    """Settings saved in the admin panel win over environment variables."""
+    row = await get_site_settings_row(session)
+    return resolve_ai_config(row, get_settings())
+
+
+async def get_provider(cfg: Annotated[AiConfig, Depends(get_ai_config)]) -> Provider | None:
+    return build_provider(cfg.provider, cfg.api_key, cfg.model, cfg.base_url)
+
+
+async def get_daily_limit(cfg: Annotated[AiConfig, Depends(get_ai_config)]) -> int:
+    return cfg.daily_limit
 
 
 @router.get("/status", response_model=StatusResponse)
@@ -76,6 +86,7 @@ async def ai_read_bill(
     request: Request,
     session: Annotated[AsyncSession, Depends(get_db)],
     provider: Annotated[Provider | None, Depends(get_provider)],
+    daily_limit: Annotated[int, Depends(get_daily_limit)],
     file: UploadFile = File(...),
 ) -> BillResponse:
     """Read units / amount / state from a photo of an electricity bill (nothing is stored)."""
@@ -96,7 +107,7 @@ async def ai_read_bill(
     row = await get_site_settings_row(session)
     if row is None or not site_settings_to_out(row).contact.advisor_enabled:
         return unavailable
-    if not daily_budget.take(get_settings().ai_daily_limit):
+    if not daily_budget.take(daily_limit):
         log.warning("advisor daily limit reached (bill reader)")
         return unavailable
 
@@ -119,6 +130,7 @@ async def ai_chat(
     request: Request,
     session: Annotated[AsyncSession, Depends(get_db)],
     provider: Annotated[Provider | None, Depends(get_provider)],
+    daily_limit: Annotated[int, Depends(get_daily_limit)],
 ) -> ChatResponse:
     ip = client_ip(request)
     limiter.check(f"ai-min:{ip}", 12, 60)
@@ -129,7 +141,7 @@ async def ai_chat(
     row = await get_site_settings_row(session)
     if row is None or not site_settings_to_out(row).contact.advisor_enabled:
         return ChatResponse(reply=FALLBACK_REPLY, fallback=True)
-    if not daily_budget.take(get_settings().ai_daily_limit):
+    if not daily_budget.take(daily_limit):
         log.warning("advisor daily limit reached")
         return ChatResponse(reply=FALLBACK_REPLY, fallback=True)
 
