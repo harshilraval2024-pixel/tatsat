@@ -78,7 +78,7 @@ export function AiSettingsSection() {
   const [busy, setBusy] = useState(false);
   const [testing, setTesting] = useState(false);
   const [err, setErr] = useState<string | null>(null);
-  const [testResult, setTestResult] = useState<{ ok: boolean; message: string } | null>(null);
+  const [testResult, setTestResult] = useState<{ ok: boolean; message: string; detail?: string; model?: string } | null>(null);
   const [models, setModels] = useState<string[]>([]);
   const [modelsNote, setModelsNote] = useState<string | null>(null);
   const [findingModels, setFindingModels] = useState(false);
@@ -211,7 +211,11 @@ export function AiSettingsSection() {
     setTestResult(null);
     setErr(null);
     try {
-      setTestResult(await jfetch<{ ok: boolean; message: string }>("/admin/ai-settings/test", { method: "POST" }));
+      setTestResult(
+        await jfetch<{ ok: boolean; message: string; detail?: string; model?: string }>("/admin/ai-settings/test", {
+          method: "POST",
+        }),
+      );
     } catch (q) {
       setTestResult({ ok: false, message: q instanceof Error ? q.message : String(q) });
     } finally {
@@ -433,6 +437,10 @@ export function AiSettingsSection() {
           >
             {testResult.ok ? "✓ " : "✗ "}
             {testResult.message}
+            {testResult.model ? <span className="mt-1 block text-xs text-muted">Model used: {testResult.model}</span> : null}
+            {testResult.detail ? (
+              <span className="mt-1 block text-xs text-muted">Provider said: {testResult.detail}</span>
+            ) : null}
           </p>
         ) : null}
       </form>

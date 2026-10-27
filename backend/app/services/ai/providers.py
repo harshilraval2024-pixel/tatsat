@@ -13,6 +13,7 @@ either final text or tool calls to run.
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import json
 import logging
@@ -31,6 +32,36 @@ MAX_OUTPUT_TOKENS = 450
 
 class ProviderError(Exception):
     """Raised for any provider failure; the message is safe to log (never contains the key)."""
+
+
+def _redact(text: str, secret: str) -> str:
+    return text.replace(secret, "[key]") if secret else text
+
+
+def api_error(provider: str, r: Any, secret: str) -> ProviderError:
+    """Build a ProviderError carrying the provider's own (redacted, short) message."""
+    detail = ""
+    try:
+        err = r.json().get("error")
+        detail = str(err.get("message") if isinstance(err, dict) else err or "")
+    except Exception:  # noqa: BLE001 - body may not be JSON
+        detail = ""
+    detail = _redact(" ".join(detail.split())[:240], secret)
+    return ProviderError(f"{provider} HTTP {r.status_code}" + (f": {detail}" if detail else ""))
+
+
+RETRY_STATUSES = (500, 502, 503, 504)  # transient provider-side failures
+
+
+async def post_with_retry(client: Any, url: str, body: dict[str, Any], headers: dict[str, str], retries: int = 2) -> Any:
+    """POST, retrying brief provider outages/overloads (503 'model is overloaded' is common on free tiers)."""
+    for attempt in range(retries + 1):
+        r = await client.post(url, json=body, headers=headers)
+        if r.status_code in RETRY_STATUSES and attempt < retries:
+            await asyncio.sleep(1.2 * (attempt + 1))
+            continue
+        return r
+    return r  # pragma: no cover
 
 
 @dataclass
@@ -109,20 +140,44 @@ def pick_default_model(ids: list[str]) -> str | None:
     return generic[-1] if generic else None
 
 
+def pick_candidates(ids: list[str], limit: int = 4) -> list[str]:
+    """Plain 'gemini-<version>-flash' models, newest first (used as an automatic fallback chain)."""
+    scored: list[tuple[tuple[int, ...], str]] = []
+    for mid in ids:
+        m = _FLASH.match(mid)
+        if m:
+            scored.append((tuple(int(x) for x in m.group(1).split(".")), mid))
+    scored.sort(reverse=True)
+    out = [mid for _, mid in scored][:limit]
+    if not out:
+        d = pick_default_model(ids)
+        out = [d] if d else []
+    return out
+
+
 # --------------------------------------------------------------------------- Gemini
 class GeminiProvider:
-    """Google Gemini via the REST API (free tier available). Key goes in a header, never the URL."""
+    """Google Gemini via the REST API (free tier available). Key goes in a header, never the URL.
 
-    # Last-resort name if the live model list cannot be fetched; the list is the real source.
-    FALLBACK_MODEL = "gemini-3.8-flash"
-    _auto_cache: dict[str, tuple[float, str]] = {}
+    Model names change often and the newest one is frequently overloaded, so when no model is
+    configured the provider builds a fallback chain of the newest plain Flash models the key can
+    use, remembers the one that last worked, and moves on to an older one on 404 / 5xx / timeouts.
+    An explicitly configured model is respected (it is only retried, never swapped).
+    """
+
+    FALLBACK_MODEL = "gemini-3.5-flash"  # last resort if the live model list cannot be fetched
+    _auto_cache: dict[str, tuple[float, list[str]]] = {}   # key -> (time, candidate chain)
+    _good_cache: dict[str, tuple[float, str]] = {}          # key -> (time, model that last worked)
+    AUTO_READ_TIMEOUT = 20.0
+    AUTO_BUDGET_S = 40.0  # total time allowed for walking the fallback chain
 
     def __init__(self, api_key: str, model: str) -> None:
         self.api_key = api_key
         self.model = (model or "").strip()
+        self.last_model: str = self.model  # model that served the most recent call
 
     async def list_models(self) -> list[str]:
-        """Model ids this key can call with generateContent (e.g. 'gemini-3.8-flash')."""
+        """Model ids this key can call with generateContent (e.g. 'gemini-3.6-flash')."""
         try:
             async with httpx.AsyncClient(timeout=HTTP_TIMEOUT) as client:
                 r = await client.get(
@@ -133,7 +188,7 @@ class GeminiProvider:
         except httpx.HTTPError as e:
             raise ProviderError(f"gemini transport error: {type(e).__name__}") from e
         if r.status_code != 200:
-            raise ProviderError(f"gemini HTTP {r.status_code}")
+            raise api_error("gemini", r, self.api_key)
         try:
             items = r.json().get("models", [])
         except ValueError as e:
@@ -147,20 +202,69 @@ class GeminiProvider:
         ]
         return sorted(set(ids))
 
-    async def _model_name(self) -> str:
-        """The configured model, or (when left blank) the newest Flash model the key can use."""
+    async def _chain(self) -> list[str]:
+        """Models to try, best first. Explicit model -> just that one."""
         if self.model:
-            return self.model
-        cache_key = hashlib_sha(self.api_key)
-        hit = self._auto_cache.get(cache_key)
-        if hit and time.monotonic() - hit[0] < 3600:
-            return hit[1]
-        try:
-            name = pick_default_model(await self.list_models()) or self.FALLBACK_MODEL
-        except ProviderError:
-            name = self.FALLBACK_MODEL
-        self._auto_cache[cache_key] = (time.monotonic(), name)
-        return name
+            return [self.model]
+        ck = hashlib_sha(self.api_key)
+        now = time.monotonic()
+        hit = self._auto_cache.get(ck)
+        if hit and now - hit[0] < 3600:
+            chain = hit[1]
+        else:
+            try:
+                chain = pick_candidates(await self.list_models()) or [self.FALLBACK_MODEL]
+            except ProviderError:
+                chain = [self.FALLBACK_MODEL]
+            self._auto_cache[ck] = (now, chain)
+        good = self._good_cache.get(ck)
+        if good and now - good[0] < 3600 and good[1] in chain:
+            chain = [good[1]] + [m for m in chain if m != good[1]]
+        return chain
+
+    async def _model_name(self) -> str:
+        """The model that would be tried first (what the admin 'Test' shows before any call)."""
+        return (await self._chain())[0]
+
+    async def _request(self, body: dict[str, Any], read_timeout: float = 25.0) -> dict[str, Any]:
+        """POST generateContent with model fallback; returns the parsed JSON of the first success."""
+        auto = not self.model
+        chain = await self._chain()
+        ck = hashlib_sha(self.api_key)
+        last: ProviderError | None = None
+        deadline = time.monotonic() + self.AUTO_BUDGET_S
+        for n, model in enumerate(chain):
+            if n and auto and time.monotonic() > deadline:
+                break  # keep the visitor's wait bounded even if several models are struggling
+            url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
+            timeout = httpx.Timeout(min(read_timeout, self.AUTO_READ_TIMEOUT) if auto else read_timeout, connect=8.0)
+            try:
+                async with httpx.AsyncClient(timeout=timeout) as client:
+                    r = await post_with_retry(
+                        client, url, body, {"x-goog-api-key": self.api_key}, retries=0 if auto else 2
+                    )
+            except httpx.HTTPError as e:
+                last = ProviderError(f"gemini transport error: {type(e).__name__}")
+                if auto:
+                    log.warning("gemini model %s unreachable (%s); trying next", model, type(e).__name__)
+                    continue
+                raise last from e
+            if r.status_code == 200:
+                try:
+                    data = r.json()
+                except ValueError as e:
+                    raise ProviderError("gemini returned an unexpected response") from e
+                self.last_model = model
+                self._good_cache[ck] = (time.monotonic(), model)
+                return data
+            last = api_error("gemini", r, self.api_key)
+            if auto and (r.status_code in RETRY_STATUSES or r.status_code == 404):
+                log.warning("gemini model %s failed (HTTP %s); trying next", model, r.status_code)
+                self._good_cache.pop(ck, None)
+                continue
+            raise last
+        self.last_model = chain[0]
+        raise last or ProviderError("gemini request failed")
 
     @staticmethod
     def _to_contents(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -200,17 +304,10 @@ class GeminiProvider:
         }
         if tools:
             body["tools"] = [{"functionDeclarations": tools}]
-        url = f"https://generativelanguage.googleapis.com/v1beta/models/{await self._model_name()}:generateContent"
+        data = await self._request(body)
         try:
-            async with httpx.AsyncClient(timeout=HTTP_TIMEOUT) as client:
-                r = await client.post(url, json=body, headers={"x-goog-api-key": self.api_key})
-        except httpx.HTTPError as e:
-            raise ProviderError(f"gemini transport error: {type(e).__name__}") from e
-        if r.status_code != 200:
-            raise ProviderError(f"gemini HTTP {r.status_code}")
-        try:
-            parts = r.json()["candidates"][0]["content"]["parts"]
-        except (KeyError, IndexError, ValueError) as e:
+            parts = data["candidates"][0]["content"]["parts"]
+        except (KeyError, IndexError, TypeError) as e:
             raise ProviderError("gemini returned an unexpected response") from e
         text = "".join(p.get("text", "") for p in parts if "text" in p).strip()
         calls = [
@@ -219,7 +316,6 @@ class GeminiProvider:
             if "functionCall" in p
         ]
         return ProviderResult(text=text or None, tool_calls=calls)
-
 
     async def extract_json(self, system, prompt, image, mime):  # type: ignore[no-untyped-def]
         body = {
@@ -239,17 +335,10 @@ class GeminiProvider:
                 "responseMimeType": "application/json",
             },
         }
-        url = f"https://generativelanguage.googleapis.com/v1beta/models/{await self._model_name()}:generateContent"
+        data = await self._request(body, read_timeout=40.0)
         try:
-            async with httpx.AsyncClient(timeout=httpx.Timeout(40.0, connect=8.0)) as client:
-                r = await client.post(url, json=body, headers={"x-goog-api-key": self.api_key})
-        except httpx.HTTPError as e:
-            raise ProviderError(f"gemini transport error: {type(e).__name__}") from e
-        if r.status_code != 200:
-            raise ProviderError(f"gemini HTTP {r.status_code}")
-        try:
-            parts = r.json()["candidates"][0]["content"]["parts"]
-        except (KeyError, IndexError, ValueError) as e:
+            parts = data["candidates"][0]["content"]["parts"]
+        except (KeyError, IndexError, TypeError) as e:
             raise ProviderError("gemini returned an unexpected response") from e
         return parse_json_object("".join(p.get("text", "") for p in parts))
 
@@ -299,15 +388,13 @@ class OpenAICompatProvider:
             body["tools"] = [{"type": "function", "function": t} for t in tools]
         try:
             async with httpx.AsyncClient(timeout=HTTP_TIMEOUT) as client:
-                r = await client.post(
-                    f"{self.base_url}/chat/completions",
-                    json=body,
-                    headers={"Authorization": f"Bearer {self.api_key}"},
+                r = await post_with_retry(
+                    client, f"{self.base_url}/chat/completions", body, {"Authorization": f"Bearer {self.api_key}"}
                 )
         except httpx.HTTPError as e:
             raise ProviderError(f"openai-compat transport error: {type(e).__name__}") from e
         if r.status_code != 200:
-            raise ProviderError(f"openai-compat HTTP {r.status_code}")
+            raise api_error("openai-compat", r, self.api_key)
         try:
             msg = r.json()["choices"][0]["message"]
         except (KeyError, IndexError, ValueError) as e:
@@ -338,15 +425,13 @@ class OpenAICompatProvider:
         }
         try:
             async with httpx.AsyncClient(timeout=httpx.Timeout(40.0, connect=8.0)) as client:
-                r = await client.post(
-                    f"{self.base_url}/chat/completions",
-                    json=body,
-                    headers={"Authorization": f"Bearer {self.api_key}"},
+                r = await post_with_retry(
+                    client, f"{self.base_url}/chat/completions", body, {"Authorization": f"Bearer {self.api_key}"}
                 )
         except httpx.HTTPError as e:
             raise ProviderError(f"openai-compat transport error: {type(e).__name__}") from e
         if r.status_code != 200:
-            raise ProviderError(f"openai-compat HTTP {r.status_code}")
+            raise api_error("openai-compat", r, self.api_key)
         try:
             content = r.json()["choices"][0]["message"].get("content")
         except (KeyError, IndexError, ValueError) as e:
@@ -361,7 +446,7 @@ class OpenAICompatProvider:
         except httpx.HTTPError as e:
             raise ProviderError(f"openai-compat transport error: {type(e).__name__}") from e
         if r.status_code != 200:
-            raise ProviderError(f"openai-compat HTTP {r.status_code}")
+            raise api_error("openai-compat", r, self.api_key)
         try:
             data = r.json().get("data", [])
         except ValueError as e:

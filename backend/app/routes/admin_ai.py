@@ -54,6 +54,8 @@ class AiSettingsIn(BaseModel):
 class AiTestOut(BaseModel):
     ok: bool
     message: str
+    detail: str = ""   # the provider's own (redacted) error text, to help diagnose
+    model: str = ""    # the model that was actually used
 
 
 async def _row(session: AsyncSession) -> T.SiteSettings:
@@ -118,6 +120,24 @@ async def put_ai_settings(
 
 
 _HTTP = re.compile(r"HTTP (\d{3})")
+
+
+def _detail(err: ProviderError) -> str:
+    """Provider's own message (already redacted by the adapter), without the 'x HTTP nnn:' prefix."""
+    text = str(err)
+    return text.split(": ", 1)[1][:240] if "HTTP" in text and ": " in text else ""
+
+
+async def _model_used(provider: object, configured: str, after_call: bool = False) -> str:
+    if after_call and getattr(provider, "last_model", ""):
+        return str(provider.last_model)  # the model that actually served (or last failed) the call
+    resolver = getattr(provider, "_model_name", None)
+    if resolver is not None:
+        try:
+            return await resolver()
+        except Exception:  # noqa: BLE001
+            return configured
+    return configured or ""
 
 
 def _friendly(err: ProviderError) -> str:
@@ -193,6 +213,7 @@ async def test_ai_settings(
     provider = build_provider(cfg.provider, cfg.api_key, cfg.model, cfg.base_url)
     if provider is None:
         return AiTestOut(ok=False, message="No API key saved yet. Enter a key and save first.")
+    model_used = await _model_used(provider, cfg.model)
     try:
         res = await provider.generate(
             "You are a connection test. Answer with the single word OK.",
@@ -201,10 +222,14 @@ async def test_ai_settings(
         )
     except ProviderError as e:
         log.warning("AI settings test failed: %s", e)
-        return AiTestOut(ok=False, message=_friendly(e))
+        return AiTestOut(ok=False, message=_friendly(e), detail=_detail(e), model=await _model_used(provider, cfg.model, True))
     except Exception:  # noqa: BLE001
         log.exception("AI settings test crashed")
         return AiTestOut(ok=False, message="Unexpected error while testing. Check the server logs.")
-    return AiTestOut(ok=True, message="Connected. The provider replied successfully.") if (res.text or res.tool_calls) else AiTestOut(
-        ok=False, message="Connected, but the model returned an empty reply. Check the model name."
+    if res.text or res.tool_calls:
+        return AiTestOut(
+            ok=True, message="Connected. The provider replied successfully.", model=await _model_used(provider, cfg.model, True)
+        )
+    return AiTestOut(
+        ok=False, message="Connected, but the model returned an empty reply. Check the model name.", model=model_used
     )

@@ -192,7 +192,8 @@ def test_connection_test_messages(admin_client, monkeypatch):
             return ProviderResult(text="OK")
 
     monkeypatch.setattr(admin_ai, "build_provider", lambda *a: Good())
-    assert admin_client.post("/admin/ai-settings/test").json() == {"ok": True, "message": "Connected. The provider replied successfully."}
+    good = admin_client.post("/admin/ai-settings/test").json()
+    assert good["ok"] is True and good["message"] == "Connected. The provider replied successfully."
 
     for text, expect in [
         ("gemini HTTP 403", "rejected the API key"),
@@ -330,3 +331,218 @@ def test_models_endpoint(admin_client, monkeypatch):
 def test_models_endpoint_requires_admin():
     app.dependency_overrides.clear()
     assert TestClient(app).get("/admin/ai-settings/models").status_code == 401
+
+
+# ----------------------------------------------------------------------------- diagnostics + retry
+def test_provider_error_carries_redacted_detail(monkeypatch):
+    secret = "AIzaSyLEAKY-SECRET-9999"
+
+    def handler(method, url, body, headers):
+        return _Resp(400, {"error": {"code": 400, "message": f"API key not valid: {secret}. Please pass a valid API key."}})
+
+    _fake_client(monkeypatch, handler)
+    with pytest.raises(ProviderError) as ei:
+        asyncio.run(GeminiProvider(secret, "m").generate("s", [{"role": "user", "content": "hi"}], []))
+    msg = str(ei.value)
+    assert "HTTP 400" in msg and "API key not valid" in msg and secret not in msg and "[key]" in msg
+
+
+def test_transient_5xx_is_retried_then_succeeds(monkeypatch):
+    import app.services.ai.providers as prov
+
+    async def no_sleep(_):
+        return None
+
+    monkeypatch.setattr(prov.asyncio, "sleep", no_sleep)
+    seq = [503, 503, 200]
+    calls = []
+
+    def handler(method, url, body, headers):
+        calls.append(1)
+        code = seq[len(calls) - 1]
+        if code != 200:
+            return _Resp(code, {"error": {"message": "The model is overloaded."}})
+        return _Resp(200, {"candidates": [{"content": {"parts": [{"text": "hello"}]}}]})
+
+    _fake_client(monkeypatch, handler)
+    res = asyncio.run(GeminiProvider("K-RETRY-0001", "m").generate("s", [{"role": "user", "content": "hi"}], []))
+    assert res.text == "hello" and len(calls) == 3
+
+
+def test_persistent_5xx_gives_up_with_detail_and_4xx_is_not_retried(monkeypatch):
+    import app.services.ai.providers as prov
+
+    async def no_sleep(_):
+        return None
+
+    monkeypatch.setattr(prov.asyncio, "sleep", no_sleep)
+    calls = []
+
+    def always503(method, url, body, headers):
+        calls.append(1)
+        return _Resp(503, {"error": {"message": "The model is overloaded. Please try again later."}})
+
+    _fake_client(monkeypatch, always503)
+    with pytest.raises(ProviderError) as ei:
+        asyncio.run(OpenAICompatProvider("K", "m", "https://x.example/v1").generate("s", [{"role": "user", "content": "hi"}], []))
+    assert len(calls) == 3 and "overloaded" in str(ei.value)
+
+    calls.clear()
+    _fake_client(monkeypatch, lambda m, u, b, h: (calls.append(1), _Resp(401, {"error": {"message": "bad key"}}))[1])
+    with pytest.raises(ProviderError):
+        asyncio.run(OpenAICompatProvider("K", "m", "https://x.example/v1").generate("s", [{"role": "user", "content": "hi"}], []))
+    assert len(calls) == 1  # auth errors are never retried
+
+
+def test_admin_test_shows_provider_detail_and_model(admin_client, monkeypatch):
+    put(admin_client)
+
+    class Overloaded:
+        async def _model_name(self):
+            return "gemini-3.8-flash"
+
+        async def generate(self, *a):
+            raise ProviderError("gemini HTTP 503: The model is overloaded. Please try again later.")
+
+    monkeypatch.setattr(admin_ai, "build_provider", lambda *a: Overloaded())
+    r = admin_client.post("/admin/ai-settings/test").json()
+    assert r["ok"] is False and "having problems" in r["message"]
+    assert r["detail"] == "The model is overloaded. Please try again later." and r["model"] == "gemini-3.8-flash"
+
+
+# ----------------------------------------------------------------------------- model fallback chain
+LIST = {"models": [
+    {"name": f"models/gemini-{v}-flash", "supportedGenerationMethods": ["generateContent"]}
+    for v in ("2.5", "3.5", "3.6", "3.7", "3.8")
+]}
+OK = {"candidates": [{"content": {"parts": [{"text": "OK"}]}}]}
+
+
+def test_pick_candidates_newest_first_and_limited():
+    from app.services.ai.providers import pick_candidates
+
+    ids = ["gemini-2.5-flash", "gemini-3.8-flash", "gemini-3.6-flash", "gemini-3.7-flash", "gemini-3.5-flash", "gemini-3.8-live"]
+    assert pick_candidates(ids) == ["gemini-3.8-flash", "gemini-3.7-flash", "gemini-3.6-flash", "gemini-3.5-flash"]
+    assert pick_candidates(ids, limit=2) == ["gemini-3.8-flash", "gemini-3.7-flash"]
+    assert pick_candidates(["gemini-4-argon"]) == ["gemini-4-argon"] and pick_candidates([]) == []
+
+
+def test_auto_mode_falls_back_past_overloaded_and_missing_models(monkeypatch):
+    import httpx
+
+    posted = []
+
+    def handler(method, url, body, headers):
+        if method == "GET":
+            return _Resp(200, LIST)
+        model = url.split("/models/")[1].split(":")[0]
+        posted.append(model)
+        if model == "gemini-3.8-flash":
+            return _Resp(503, {"error": {"message": "high demand"}})
+        if model == "gemini-3.7-flash":
+            raise httpx.ReadTimeout("slow")
+        if model == "gemini-3.6-flash":
+            return _Resp(404, {"error": {"message": "no longer available"}})
+        return _Resp(200, OK)
+
+    _fake_client(monkeypatch, handler)
+    GeminiProvider._auto_cache.clear()
+    GeminiProvider._good_cache.clear()
+    p = GeminiProvider("KEY-CHAIN-0001", "")
+    res = asyncio.run(p.generate("s", [{"role": "user", "content": "hi"}], []))
+    assert res.text == "OK" and p.last_model == "gemini-3.5-flash"
+    # 503 (overloaded) -> timeout -> 404 (gone) -> finally a model that works
+    assert posted == ["gemini-3.8-flash", "gemini-3.7-flash", "gemini-3.6-flash", "gemini-3.5-flash"]
+
+
+def test_fallback_walk_is_time_bounded(monkeypatch):
+    import app.services.ai.providers as prov
+
+    clock = {"t": 1000.0}
+    monkeypatch.setattr(prov.time, "monotonic", lambda: clock["t"])
+    posted = []
+
+    def handler(method, url, body, headers):
+        if method == "GET":
+            return _Resp(200, LIST)
+        posted.append(url.split("/models/")[1].split(":")[0])
+        clock["t"] += 30.0  # every attempt burns 30s
+        return _Resp(503, {"error": {"message": "busy"}})
+
+    _fake_client(monkeypatch, handler)
+    GeminiProvider._auto_cache.clear()
+    GeminiProvider._good_cache.clear()
+    with pytest.raises(ProviderError):
+        asyncio.run(GeminiProvider("KEY-BUDGET-001", "").generate("s", [{"role": "user", "content": "hi"}], []))
+    assert len(posted) == 2  # stops once the 40s budget is spent instead of walking all four models
+
+
+def test_auto_mode_remembers_the_model_that_worked(monkeypatch):
+    posted = []
+
+    def handler(method, url, body, headers):
+        if method == "GET":
+            return _Resp(200, LIST)
+        model = url.split("/models/")[1].split(":")[0]
+        posted.append(model)
+        return _Resp(503, {"error": {"message": "high demand"}}) if model == "gemini-3.8-flash" else _Resp(200, OK)
+
+    _fake_client(monkeypatch, handler)
+    GeminiProvider._auto_cache.clear()
+    GeminiProvider._good_cache.clear()
+    p = GeminiProvider("KEY-REMEMBER-01", "")
+    asyncio.run(p.generate("s", [{"role": "user", "content": "hi"}], []))
+    assert posted == ["gemini-3.8-flash", "gemini-3.7-flash"] and p.last_model == "gemini-3.7-flash"
+    posted.clear()
+    asyncio.run(p.generate("s", [{"role": "user", "content": "hi"}], []))
+    assert posted == ["gemini-3.7-flash"]  # goes straight to the model that last worked
+
+
+def test_explicit_model_is_never_swapped(monkeypatch):
+    import app.services.ai.providers as prov
+
+    async def no_sleep(_):
+        return None
+
+    monkeypatch.setattr(prov.asyncio, "sleep", no_sleep)
+    posted = []
+
+    def handler(method, url, body, headers):
+        posted.append(url.split("/models/")[1].split(":")[0])
+        return _Resp(503, {"error": {"message": "high demand"}})
+
+    _fake_client(monkeypatch, handler)
+    with pytest.raises(ProviderError) as ei:
+        asyncio.run(GeminiProvider("KEY-EXPLICIT-1", "my-pinned-model").generate("s", [{"role": "user", "content": "hi"}], []))
+    assert set(posted) == {"my-pinned-model"} and len(posted) == 3 and "high demand" in str(ei.value)
+
+
+def test_auto_mode_raises_last_error_when_every_candidate_fails(monkeypatch):
+    def handler(method, url, body, headers):
+        if method == "GET":
+            return _Resp(200, LIST)
+        return _Resp(503, {"error": {"message": "everything is busy"}})
+
+    _fake_client(monkeypatch, handler)
+    GeminiProvider._auto_cache.clear()
+    GeminiProvider._good_cache.clear()
+    with pytest.raises(ProviderError) as ei:
+        asyncio.run(GeminiProvider("KEY-ALLFAIL-01", "").generate("s", [{"role": "user", "content": "hi"}], []))
+    assert "everything is busy" in str(ei.value)
+
+
+def test_auth_errors_do_not_trigger_fallback(monkeypatch):
+    posted = []
+
+    def handler(method, url, body, headers):
+        if method == "GET":
+            return _Resp(200, LIST)
+        posted.append(url)
+        return _Resp(403, {"error": {"message": "key rejected"}})
+
+    _fake_client(monkeypatch, handler)
+    GeminiProvider._auto_cache.clear()
+    GeminiProvider._good_cache.clear()
+    with pytest.raises(ProviderError):
+        asyncio.run(GeminiProvider("KEY-AUTH-00001", "").generate("s", [{"role": "user", "content": "hi"}], []))
+    assert len(posted) == 1  # a bad key is reported immediately, not retried across models
