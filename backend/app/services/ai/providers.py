@@ -33,6 +33,10 @@ MAX_OUTPUT_TOKENS = 450
 class ProviderError(Exception):
     """Raised for any provider failure; the message is safe to log (never contains the key)."""
 
+    def __init__(self, message: str, status: int | None = None) -> None:
+        super().__init__(message)
+        self.status = status
+
 
 def _redact(text: str, secret: str) -> str:
     return text.replace(secret, "[key]") if secret else text
@@ -47,7 +51,7 @@ def api_error(provider: str, r: Any, secret: str) -> ProviderError:
     except Exception:  # noqa: BLE001 - body may not be JSON
         detail = ""
     detail = _redact(" ".join(detail.split())[:240], secret)
-    return ProviderError(f"{provider} HTTP {r.status_code}" + (f": {detail}" if detail else ""))
+    return ProviderError(f"{provider} HTTP {r.status_code}" + (f": {detail}" if detail else ""), status=r.status_code)
 
 
 RETRY_STATUSES = (500, 502, 503, 504)  # transient provider-side failures
@@ -168,8 +172,10 @@ class GeminiProvider:
     FALLBACK_MODEL = "gemini-3.5-flash"  # last resort if the live model list cannot be fetched
     _auto_cache: dict[str, tuple[float, list[str]]] = {}   # key -> (time, candidate chain)
     _good_cache: dict[str, tuple[float, str]] = {}          # key -> (time, model that last worked)
-    AUTO_READ_TIMEOUT = 20.0
-    AUTO_BUDGET_S = 40.0  # total time allowed for walking the fallback chain
+    AUTO_READ_TIMEOUT = 18.0
+    # Total wall-clock allowed for an automatic-model request. Must stay under the ~30s that the
+    # website proxy (Next.js / Vercel rewrites) allows, or the browser sees a generic "Server error".
+    AUTO_BUDGET_S = 24.0
 
     def __init__(self, api_key: str, model: str) -> None:
         self.api_key = api_key
@@ -226,45 +232,95 @@ class GeminiProvider:
         """The model that would be tried first (what the admin 'Test' shows before any call)."""
         return (await self._chain())[0]
 
+    async def _call_model(self, model: str, body: dict[str, Any], timeout: httpx.Timeout, retries: int) -> dict[str, Any]:
+        """One generateContent call against one model. Returns parsed JSON or raises ProviderError."""
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
+        try:
+            async with httpx.AsyncClient(timeout=timeout) as client:
+                r = await post_with_retry(client, url, body, {"x-goog-api-key": self.api_key}, retries=retries)
+        except httpx.HTTPError as e:
+            raise ProviderError(f"gemini transport error: {type(e).__name__}") from e
+        if r.status_code != 200:
+            raise api_error("gemini", r, self.api_key)
+        try:
+            data = r.json()
+        except ValueError as e:
+            raise ProviderError("gemini returned an unexpected response") from e
+        return data
+
+    def _won(self, model: str) -> None:
+        """Remember which model actually served the request (only the winner of a race)."""
+        self.last_model = model
+        self._good_cache[hashlib_sha(self.api_key)] = (time.monotonic(), model)
+
+    @staticmethod
+    def _is_fatal(err: ProviderError) -> bool:
+        """Errors that no other model can fix (bad/blocked key)."""
+        return err.status in (401, 403)
+
     async def _request(self, body: dict[str, Any], read_timeout: float = 25.0) -> dict[str, Any]:
-        """POST generateContent with model fallback; returns the parsed JSON of the first success."""
-        auto = not self.model
+        """POST generateContent.
+
+        Explicit model: just that model (retrying brief outages). Automatic model: try the model that
+        last worked first; if that fails (or none is known yet) race the newest Flash models in
+        parallel and take the first success, so a busy/slow newest model never blocks the visitor.
+        """
+        if self.model:
+            data = await self._call_model(self.model, body, httpx.Timeout(read_timeout, connect=8.0), retries=2)
+            self.last_model = self.model
+            return data
+
         chain = await self._chain()
+        timeout = httpx.Timeout(min(read_timeout, self.AUTO_READ_TIMEOUT), connect=8.0)
         ck = hashlib_sha(self.api_key)
+        good = self._good_cache.get(ck)
+        remaining = list(chain)
         last: ProviderError | None = None
-        deadline = time.monotonic() + self.AUTO_BUDGET_S
-        for n, model in enumerate(chain):
-            if n and auto and time.monotonic() > deadline:
-                break  # keep the visitor's wait bounded even if several models are struggling
-            url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
-            timeout = httpx.Timeout(min(read_timeout, self.AUTO_READ_TIMEOUT) if auto else read_timeout, connect=8.0)
+
+        if good and time.monotonic() - good[0] < 3600 and good[1] in chain:
+            first = good[1]
+            remaining = [m for m in chain if m != first]
             try:
-                async with httpx.AsyncClient(timeout=timeout) as client:
-                    r = await post_with_retry(
-                        client, url, body, {"x-goog-api-key": self.api_key}, retries=0 if auto else 2
-                    )
-            except httpx.HTTPError as e:
-                last = ProviderError(f"gemini transport error: {type(e).__name__}")
-                if auto:
-                    log.warning("gemini model %s unreachable (%s); trying next", model, type(e).__name__)
-                    continue
-                raise last from e
-            if r.status_code == 200:
-                try:
-                    data = r.json()
-                except ValueError as e:
-                    raise ProviderError("gemini returned an unexpected response") from e
-                self.last_model = model
-                self._good_cache[ck] = (time.monotonic(), model)
+                data = await self._call_model(first, body, timeout, retries=1)
+                self._won(first)
                 return data
-            last = api_error("gemini", r, self.api_key)
-            if auto and (r.status_code in RETRY_STATUSES or r.status_code == 404):
-                log.warning("gemini model %s failed (HTTP %s); trying next", model, r.status_code)
+            except ProviderError as e:
+                if self._is_fatal(e):
+                    raise
+                last = e
                 self._good_cache.pop(ck, None)
-                continue
-            raise last
+                log.warning("gemini model %s failed (%s); racing the others", first, e)
+            if not remaining:
+                raise last
+
+        tasks = {asyncio.create_task(self._call_model(m, body, timeout, retries=0)): m for m in remaining}
+        pending = set(tasks)
+        deadline = time.monotonic() + self.AUTO_BUDGET_S
+        try:
+            while pending:
+                left = deadline - time.monotonic()
+                if left <= 0:
+                    break
+                done, pending = await asyncio.wait(pending, timeout=left, return_when=asyncio.FIRST_COMPLETED)
+                if not done:
+                    break
+                for t in sorted(done, key=lambda t: remaining.index(tasks[t])):  # newest first on ties
+                    try:
+                        data = t.result()
+                        self._won(tasks[t])
+                        return data
+                    except ProviderError as e:
+                        last = e
+                        log.warning("gemini model %s failed (%s)", tasks[t], e)
+                        if self._is_fatal(e):
+                            raise
+        finally:
+            for t in pending:
+                t.cancel()
+            if pending:
+                await asyncio.gather(*pending, return_exceptions=True)
         self.last_model = chain[0]
-        raise last or ProviderError("gemini request failed")
+        raise last or ProviderError("gemini transport error: Timeout")
 
     @staticmethod
     def _to_contents(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:

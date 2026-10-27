@@ -2,6 +2,8 @@ import type { NextConfig } from "next";
 import { resolvePublicApiOrigin } from "./src/lib/api-origin";
 
 const nextConfig: NextConfig = {
+  // Slow AI requests (model search, bill reading) can exceed the default 30s rewrite-proxy timeout.
+  experimental: { proxyTimeout: 60_000 },
   /** Dev: proxy to local FastAPI. Vercel: proxy to Render (127.0.0.1 is blocked in production). */
   async rewrites() {
     const target = resolvePublicApiOrigin();

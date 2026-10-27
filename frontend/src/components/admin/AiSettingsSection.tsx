@@ -67,7 +67,8 @@ function describe(s: AiSettings): string {
     return s.source === "env" ? "Not configured on the server. The AI features are off." : "Off. The AI features are hidden.";
   }
   const where = s.source === "admin" ? "settings saved here" : "the server's environment settings";
-  return `On — using ${names[s.working_provider] ?? s.working_provider} (${where}).`;
+  const key = s.source === "admin" ? (s.key_set ? ` API key saved (${s.key_hint}).` : " No API key saved.") : "";
+  return `On — using ${names[s.working_provider] ?? s.working_provider} (${where}).${key}`;
 }
 
 export function AiSettingsSection() {
@@ -156,8 +157,9 @@ export function AiSettingsSection() {
           bill_reader_enabled: billOn,
         }),
       });
+      const keyChanged = apiKey.trim() !== "";
       apply(next);
-      toast.success("AI settings saved.");
+      toast.success(keyChanged && next.key_set ? `AI settings saved. API key stored (ends with ${next.key_hint.replace("…", "")}).` : "AI settings saved.");
     } catch (q) {
       setErr(q instanceof Error ? q.message : String(q));
     } finally {
@@ -340,8 +342,36 @@ export function AiSettingsSection() {
         {needsKey ? (
           <>
             <div>
+              <div
+                role="status"
+                data-testid="ai-key-status"
+                className={`mb-3 flex flex-wrap items-center gap-2 rounded-xl border px-3 py-2 text-sm ${
+                  saved.key_set && saved.key_readable
+                    ? "border-[#1f9d55]/50 bg-[#1f9d55]/10 text-white"
+                    : "border-accent/50 bg-accent/10 text-accent"
+                }`}
+              >
+                {saved.key_set && saved.key_readable ? (
+                  <>
+                    <span aria-hidden>✓</span>
+                    <strong>API key saved</strong>
+                    <span className="font-mono text-xs">ends with {saved.key_hint.replace("…", "")}</span>
+                    <span className="text-xs text-muted">· stored encrypted</span>
+                  </>
+                ) : saved.key_set ? (
+                  <>
+                    <span aria-hidden>⚠</span>
+                    <strong>The saved key can no longer be read.</strong> Paste it again below and press Save.
+                  </>
+                ) : (
+                  <>
+                    <span aria-hidden>⚠</span>
+                    <strong>No API key saved yet.</strong> Paste one below and press Save.
+                  </>
+                )}
+              </div>
               <label className={label} htmlFor="ai-key">
-                API key
+                {saved.key_set ? "Replace API key (optional)" : "API key"}
               </label>
               <input
                 id="ai-key"

@@ -85,8 +85,7 @@ export async function jfetch<T>(
         msg =
           "Cannot reach the API. Start the FastAPI server (e.g. uvicorn on port 8000) or check NEXT_PUBLIC_API_URL.";
       } else if (res.status === 500) {
-        msg =
-          "Server error (is PostgreSQL running and migrations + seed applied in `backend`?)";
+        msg = "The server hit an error or took too long. Please try again in a moment.";
       }
     }
     throw new Error(msg);

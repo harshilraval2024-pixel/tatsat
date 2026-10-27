@@ -264,34 +264,6 @@ def _fake_client(monkeypatch, handler):
     monkeypatch.setattr(prov.httpx, "AsyncClient", Client)
 
 
-def test_gemini_lists_only_generate_content_models_and_auto_picks(monkeypatch):
-    calls = []
-
-    def handler(method, url, body, headers):
-        calls.append((method, url))
-        if method == "GET":
-            return _Resp(200, {"models": [
-                {"name": "models/gemini-3.8-flash", "supportedGenerationMethods": ["generateContent", "countTokens"]},
-                {"name": "models/gemini-3.6-flash", "supportedGenerationMethods": ["generateContent"]},
-                {"name": "models/text-embedding-9", "supportedGenerationMethods": ["embedContent"]},
-                {"name": "models/gemini-embed-1", "supportedGenerationMethods": ["embedContent"]},
-            ]})
-        return _Resp(200, {"candidates": [{"content": {"parts": [{"text": "OK"}]}}]})
-
-    _fake_client(monkeypatch, handler)
-    GeminiProvider._auto_cache.clear()
-    p = GeminiProvider("KEY-AUTO-0001", "")  # blank model -> automatic
-    assert asyncio.run(p.list_models()) == ["gemini-3.6-flash", "gemini-3.8-flash"]
-    asyncio.run(p.generate("s", [{"role": "user", "content": "hi"}], []))
-    asyncio.run(p.generate("s", [{"role": "user", "content": "hi"}], []))
-    posts = [u for m, u in calls if m == "POST"]
-    assert all("/models/gemini-3.8-flash:generateContent" in u for u in posts)
-    assert sum(1 for m, _ in calls if m == "GET") == 2  # one explicit list + one cached auto-resolution
-
-    explicit = GeminiProvider("KEY", "my-model")
-    asyncio.run(explicit.generate("s", [{"role": "user", "content": "hi"}], []))
-    assert "/models/my-model:generateContent" in [u for m, u in calls if m == "POST"][-1]
-
 
 def test_gemini_auto_falls_back_when_list_fails(monkeypatch):
     def handler(method, url, body, headers):
@@ -458,47 +430,6 @@ def test_auto_mode_falls_back_past_overloaded_and_missing_models(monkeypatch):
     assert posted == ["gemini-3.8-flash", "gemini-3.7-flash", "gemini-3.6-flash", "gemini-3.5-flash"]
 
 
-def test_fallback_walk_is_time_bounded(monkeypatch):
-    import app.services.ai.providers as prov
-
-    clock = {"t": 1000.0}
-    monkeypatch.setattr(prov.time, "monotonic", lambda: clock["t"])
-    posted = []
-
-    def handler(method, url, body, headers):
-        if method == "GET":
-            return _Resp(200, LIST)
-        posted.append(url.split("/models/")[1].split(":")[0])
-        clock["t"] += 30.0  # every attempt burns 30s
-        return _Resp(503, {"error": {"message": "busy"}})
-
-    _fake_client(monkeypatch, handler)
-    GeminiProvider._auto_cache.clear()
-    GeminiProvider._good_cache.clear()
-    with pytest.raises(ProviderError):
-        asyncio.run(GeminiProvider("KEY-BUDGET-001", "").generate("s", [{"role": "user", "content": "hi"}], []))
-    assert len(posted) == 2  # stops once the 40s budget is spent instead of walking all four models
-
-
-def test_auto_mode_remembers_the_model_that_worked(monkeypatch):
-    posted = []
-
-    def handler(method, url, body, headers):
-        if method == "GET":
-            return _Resp(200, LIST)
-        model = url.split("/models/")[1].split(":")[0]
-        posted.append(model)
-        return _Resp(503, {"error": {"message": "high demand"}}) if model == "gemini-3.8-flash" else _Resp(200, OK)
-
-    _fake_client(monkeypatch, handler)
-    GeminiProvider._auto_cache.clear()
-    GeminiProvider._good_cache.clear()
-    p = GeminiProvider("KEY-REMEMBER-01", "")
-    asyncio.run(p.generate("s", [{"role": "user", "content": "hi"}], []))
-    assert posted == ["gemini-3.8-flash", "gemini-3.7-flash"] and p.last_model == "gemini-3.7-flash"
-    posted.clear()
-    asyncio.run(p.generate("s", [{"role": "user", "content": "hi"}], []))
-    assert posted == ["gemini-3.7-flash"]  # goes straight to the model that last worked
 
 
 def test_explicit_model_is_never_swapped(monkeypatch):
@@ -534,22 +465,6 @@ def test_auto_mode_raises_last_error_when_every_candidate_fails(monkeypatch):
     assert "everything is busy" in str(ei.value)
 
 
-def test_auth_errors_do_not_trigger_fallback(monkeypatch):
-    posted = []
-
-    def handler(method, url, body, headers):
-        if method == "GET":
-            return _Resp(200, LIST)
-        posted.append(url)
-        return _Resp(403, {"error": {"message": "key rejected"}})
-
-    _fake_client(monkeypatch, handler)
-    GeminiProvider._auto_cache.clear()
-    GeminiProvider._good_cache.clear()
-    with pytest.raises(ProviderError):
-        asyncio.run(GeminiProvider("KEY-AUTH-00001", "").generate("s", [{"role": "user", "content": "hi"}], []))
-    assert len(posted) == 1  # a bad key is reported immediately, not retried across models
-
 
 def test_feature_switches_default_off_and_round_trip(admin_client):
     d = admin_client.get("/admin/ai-settings").json()
@@ -571,3 +486,165 @@ def ai_routes_get_provider():
     from app.routes import ai as ai_routes
 
     return ai_routes.get_provider
+
+
+# ----------------------------------------------------------------------------- parallel model race
+def _async_client(monkeypatch, handler):
+    """Like _fake_client, but the handler is async so tests can simulate slow / hanging models."""
+    import app.services.ai.providers as prov
+
+    class Client:
+        def __init__(self, *a, **k):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *a):
+            return False
+
+        async def get(self, url, params=None, headers=None):
+            return await handler("GET", url, None, headers)
+
+        async def post(self, url, json=None, headers=None):
+            return await handler("POST", url, json, headers)
+
+    monkeypatch.setattr(prov.httpx, "AsyncClient", Client)
+
+
+def _model_of(url):
+    return url.split("/models/")[1].split(":")[0]
+
+
+def _reset(monkeypatch):
+    import app.services.ai.providers as prov
+
+    async def no_sleep(_):
+        return None
+
+    monkeypatch.setattr(prov.asyncio, "sleep", no_sleep)  # only affects retry back-off
+    GeminiProvider._auto_cache.clear()
+    GeminiProvider._good_cache.clear()
+
+
+def test_lists_only_generate_content_models_and_first_call_picks_newest(monkeypatch):
+    posted = []
+
+    async def handler(method, url, body, headers):
+        if method == "GET":
+            return _Resp(200, {"models": [
+                {"name": "models/gemini-3.8-flash", "supportedGenerationMethods": ["generateContent", "countTokens"]},
+                {"name": "models/gemini-3.6-flash", "supportedGenerationMethods": ["generateContent"]},
+                {"name": "models/text-embedding-9", "supportedGenerationMethods": ["embedContent"]},
+                {"name": "models/gemini-embed-1", "supportedGenerationMethods": ["embedContent"]},
+            ]})
+        posted.append(_model_of(url))
+        return _Resp(200, OK)
+
+    _async_client(monkeypatch, handler)
+    _reset(monkeypatch)
+    p = GeminiProvider("KEY-AUTO-0001", "")
+    assert asyncio.run(p.list_models()) == ["gemini-3.6-flash", "gemini-3.8-flash"]
+    asyncio.run(p.generate("s", [{"role": "user", "content": "hi"}], []))
+    assert p.last_model == "gemini-3.8-flash"
+    posted.clear()
+    asyncio.run(p.generate("s", [{"role": "user", "content": "hi"}], []))
+    assert posted == ["gemini-3.8-flash"]  # the winner is remembered: exactly one call from now on
+
+    explicit = GeminiProvider("KEY", "my-model")
+    posted.clear()
+    asyncio.run(explicit.generate("s", [{"role": "user", "content": "hi"}], []))
+    assert posted == ["my-model"]
+
+
+def test_race_skips_overloaded_and_slow_models_and_is_fast(monkeypatch):
+    import time as _t
+
+    import httpx
+
+    posted = []
+
+    async def handler(method, url, body, headers):
+        if method == "GET":
+            return _Resp(200, LIST)
+        model = _model_of(url)
+        posted.append(model)
+        if model == "gemini-3.8-flash":
+            await asyncio.sleep(0.05)
+            return _Resp(503, {"error": {"message": "high demand"}})
+        if model == "gemini-3.7-flash":
+            raise httpx.ReadTimeout("slow")
+        if model == "gemini-3.6-flash":
+            await asyncio.sleep(0.02)
+            return _Resp(200, OK)
+        await asyncio.sleep(1.5)  # 3.5 is slow: must be cancelled once 3.6 wins
+        return _Resp(200, OK)
+
+    _async_client(monkeypatch, handler)
+    GeminiProvider._auto_cache.clear()
+    GeminiProvider._good_cache.clear()
+    p = GeminiProvider("KEY-RACE-00001", "")
+    t0 = _t.monotonic()
+    res = asyncio.run(p.generate("s", [{"role": "user", "content": "hi"}], []))
+    assert res.text == "OK" and p.last_model == "gemini-3.6-flash"
+    assert set(posted) == {"gemini-3.8-flash", "gemini-3.7-flash", "gemini-3.6-flash", "gemini-3.5-flash"}
+    assert _t.monotonic() - t0 < 1.0  # did not wait for the slow model
+
+
+def test_race_is_time_bounded(monkeypatch):
+    import time as _t
+
+    async def handler(method, url, body, headers):
+        if method == "GET":
+            return _Resp(200, LIST)
+        await asyncio.sleep(5)  # every model hangs
+        return _Resp(200, OK)
+
+    _async_client(monkeypatch, handler)
+    GeminiProvider._auto_cache.clear()
+    GeminiProvider._good_cache.clear()
+    monkeypatch.setattr(GeminiProvider, "AUTO_BUDGET_S", 0.3)
+    t0 = _t.monotonic()
+    with pytest.raises(ProviderError):
+        asyncio.run(GeminiProvider("KEY-BOUND-0001", "").generate("s", [{"role": "user", "content": "hi"}], []))
+    assert _t.monotonic() - t0 < 2.0  # bounded by the budget, not by the hanging models
+
+
+def test_failed_good_model_triggers_a_fresh_race(monkeypatch):
+    posted = []
+
+    async def handler(method, url, body, headers):
+        if method == "GET":
+            return _Resp(200, LIST)
+        model = _model_of(url)
+        posted.append(model)
+        if model == "gemini-3.7-flash":
+            return _Resp(503, {"error": {"message": "now overloaded"}})
+        return _Resp(200, OK)
+
+    _async_client(monkeypatch, handler)
+    _reset(monkeypatch)
+    ck = __import__("app.services.ai.providers", fromlist=["hashlib_sha"]).hashlib_sha("KEY-GOODFAIL-01")
+    import time as _t
+
+    GeminiProvider._good_cache[ck] = (_t.monotonic(), "gemini-3.7-flash")  # remembered, but it just broke
+    p = GeminiProvider("KEY-GOODFAIL-01", "")
+    GeminiProvider._auto_cache[ck] = (_t.monotonic(), ["gemini-3.8-flash", "gemini-3.7-flash", "gemini-3.6-flash", "gemini-3.5-flash"])
+    asyncio.run(p.generate("s", [{"role": "user", "content": "hi"}], []))
+    assert posted[:2] == ["gemini-3.7-flash", "gemini-3.7-flash"]  # tried (plus one retry), then
+    assert p.last_model in ("gemini-3.8-flash", "gemini-3.6-flash", "gemini-3.5-flash")  # raced the rest
+
+
+def test_auth_errors_surface_immediately(monkeypatch):
+    async def handler(method, url, body, headers):
+        if method == "GET":
+            return _Resp(200, LIST)
+        return _Resp(403, {"error": {"message": "key rejected"}})
+
+    _async_client(monkeypatch, handler)
+    GeminiProvider._auto_cache.clear()
+    GeminiProvider._good_cache.clear()
+    with pytest.raises(ProviderError) as ei:
+        asyncio.run(GeminiProvider("KEY-AUTH-00001", "").generate("s", [{"role": "user", "content": "hi"}], []))
+    assert ei.value.status == 403 and "key rejected" in str(ei.value)
+
