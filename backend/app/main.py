@@ -14,7 +14,7 @@ from app.config import get_settings
 from app.database import get_db
 from app.dependencies import get_current_admin
 from app.models import tables as T
-from app.routes import admin, cms, health, public
+from app.routes import admin, ai, cms, health, public
 from app.services.leads_export import streaming_leads_csv
 
 settings = get_settings()
@@ -119,6 +119,7 @@ app.include_router(health.router)
 app.include_router(public.router)
 app.include_router(admin.router)
 app.include_router(cms.router)
+app.include_router(ai.router)
 
 
 @app.get("/export-leads")

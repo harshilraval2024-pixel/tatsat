@@ -4,6 +4,7 @@ import "./globals.css";
 import { Navbar } from "@/components/layout/Navbar";
 import { Footer } from "@/components/layout/Footer";
 import { WhatsAppFloat } from "@/components/WhatsAppFloat";
+import { SolarAdvisor } from "@/components/SolarAdvisor";
 import { Providers } from "./providers";
 import { site } from "@/lib/site";
 import { getSiteConfig } from "@/lib/get-site-config";
@@ -88,6 +89,7 @@ export default async function RootLayout({
           <main className="flex-1">{children}</main>
           <Footer />
           <WhatsAppFloat />
+          <SolarAdvisor />
           <Providers />
         </SiteConfigProvider>
       </body>

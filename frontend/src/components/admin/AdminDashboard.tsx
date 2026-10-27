@@ -1224,6 +1224,37 @@ export function AdminDashboard() {
                     }
                   />
                 </div>
+                <div className="sm:col-span-2 rounded-2xl border border-white/10 p-4">
+                  <label className="flex items-center gap-2 text-sm font-semibold text-white">
+                    <input
+                      type="checkbox"
+                      checked={siteSettings.contact.advisor_enabled}
+                      onChange={(e) =>
+                        setSiteSettings({
+                          ...siteSettings,
+                          contact: { ...siteSettings.contact, advisor_enabled: e.target.checked },
+                        })
+                      }
+                    />
+                    Show the AI Solar Advisor chat on the website
+                  </label>
+                  <p className="mt-1 text-xs text-muted">
+                    The chat also needs the AI provider key set on the server; without it nothing is shown. Untick to
+                    switch it off instantly.
+                  </p>
+                  <label className={`${label} mt-3 block`}>Advisor greeting</label>
+                  <textarea
+                    className={`${field} min-h-[64px]`}
+                    value={siteSettings.contact.advisor_greeting}
+                    maxLength={300}
+                    onChange={(e) =>
+                      setSiteSettings({
+                        ...siteSettings,
+                        contact: { ...siteSettings.contact, advisor_greeting: e.target.value },
+                      })
+                    }
+                  />
+                </div>
                 <div className="sm:col-span-2">
                   <label className={label}>Card description</label>
                   <textarea

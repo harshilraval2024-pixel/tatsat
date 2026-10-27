@@ -57,6 +57,14 @@ class Settings(BaseSettings):
         r"|^https?://172\.(1[6-9]|2\d|3[0-1])\.\d{1,3}\.\d{1,3}(:\d+)?$"
     )
 
+    # Solar Advisor (LLM chat). Disabled until a provider + key are configured.
+    #   ai_provider: "gemini" | "openai" (any OpenAI-compatible API: OpenAI, Groq, ...) | "fake" (offline demo/tests)
+    ai_provider: str = ""
+    ai_api_key: str = ""
+    ai_model: str = ""
+    ai_base_url: str = ""  # only for provider "openai", e.g. https://api.groq.com/openai/v1
+    ai_daily_limit: int = 500  # hard cap on chat requests per day across all visitors
+
     # WhatsApp (optional) — e.g. Twilio or Meta API base URL; leave empty to disable
     whatsapp_api_url: str = ""
     whatsapp_api_token: str = ""

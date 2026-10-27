@@ -80,6 +80,35 @@ suspends after 5 idle minutes and wakes on the next request).
    ```
 5. Check `https://<your-api>/health/db` → `"database":"connected"`.
 
+## Solar Advisor (AI chat)
+
+An LLM chat on the website that answers solar questions using **this site's own data**: it calls
+server-side tools (`estimate_system`, `get_subsidy`, `list_services`) so prices, system sizes and
+subsidies come from the estimator and database, never from the model's memory.
+
+How it works: `POST /ai/chat` → `app/services/ai/advisor.py` runs a bounded loop (max 3 model/tool
+rounds, 4 tool calls) → provider adapter in `app/services/ai/providers.py` (Gemini, any
+OpenAI-compatible API such as Groq/OpenAI, or an offline `fake` provider) → tools in
+`app/services/ai/tools.py`. The API key stays on the server.
+
+Environment variables (nothing is shown on the site until a provider is configured):
+
+| Variable | Example | Notes |
+|---|---|---|
+| `AI_PROVIDER` | `gemini` | `gemini`, `openai` (also Groq etc.), or `fake` for an offline demo |
+| `AI_API_KEY` | _(secret)_ | e.g. a free key from Google AI Studio; set it only in the host dashboard |
+| `AI_MODEL` | `gemini-2.0-flash` | optional; sensible default per provider |
+| `AI_BASE_URL` | `https://api.groq.com/openai/v1` | only for `openai`-style providers |
+| `AI_DAILY_LIMIT` | `500` | hard cap on chat requests per day (protects your bill) |
+
+Safeguards: per-IP rate limits (12/min, 60/hour), message length and history caps, a daily cap,
+tool-argument validation, an injection-resistant system prompt, and a friendly WhatsApp fallback on any
+provider failure. The advisor can be switched off instantly in Admin → Website → *Contact page &
+WhatsApp card*.
+
+Try it offline: `AI_PROVIDER=fake` (no key needed). Run the tests with
+`pip install -r requirements-dev.txt` then `python -m pytest` (no network or key required).
+
 ## Docker (PostgreSQL)
 
 From `backend/`:

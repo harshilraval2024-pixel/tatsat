@@ -55,8 +55,16 @@ export function WhatsAppFloat() {
     };
   }, []);
 
+  // Only one chat widget open at a time.
+  useEffect(() => {
+    const closeMe = () => setOpen(false);
+    window.addEventListener("widget-open:ai", closeMe);
+    return () => window.removeEventListener("widget-open:ai", closeMe);
+  }, []);
+
   useEffect(() => {
     if (!open) return;
+    window.dispatchEvent(new Event("widget-open:wa"));
     inputRef.current?.focus();
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") setOpen(false);
